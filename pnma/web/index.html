@@ -1,0 +1,227 @@
+<!doctype html>
+<!--
+  PNMA dashboard shell.
+
+  Served by `pnma/api/app.py` from an explicit allowlist (`STATIC_FILES`):
+  this page, two scripts, one stylesheet, a manifest and icons. There is no
+  static mount and no catch-all, so nothing here may reference a file outside
+  that list, a CDN, or a webfont host. The dashboard has to keep working on a
+  box with no route to the internet, which is the normal case for the machine
+  it monitors.
+
+  Sections are containers only. Everything inside them is built by the scripts
+  from the API, so a section that has no data yet renders an explicit empty
+  state rather than a stale skeleton. `data-tab` groups sections into views;
+  viz.js owns the navigation and shows one view at a time.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1116">
+  <!-- Installable as a home-screen app. On iOS Safari the apple-* tags are
+       what make "Add to Home Screen" open full-screen; the manifest covers
+       everything else. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PNMA">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <title>PNMA</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead__inner">
+    <div class="masthead__brand">
+      <h1 class="masthead__title">PNMA</h1>
+      <span class="masthead__sub">Personal Network Monitoring Agent</span>
+    </div>
+    <div class="masthead__tools" id="masthead-tools"></div>
+  </div>
+  <nav class="tabs" id="tabs" aria-label="Views"></nav>
+</header>
+
+<main class="page">
+
+  <!-- ============================================================ overview -->
+
+  <section class="section" id="overview" data-tab="overview">
+    <div class="section__head">
+      <h2 class="section__title">Posture</h2>
+      <p class="section__note">
+        Three domains, one rule: a control that was not measured counts
+        against you. The rings show ok / finding / <em>unknown</em> as
+        proportions of everything the agent is supposed to know.
+      </p>
+    </div>
+    <div id="overview-body">
+      <div class="placeholder">Loading overview&hellip;</div>
+    </div>
+  </section>
+
+  <section class="section" id="netmap" data-tab="overview">
+    <div class="section__head">
+      <h2 class="section__title">Network map</h2>
+      <p class="section__note">
+        Every device discovery has seen, around the gateway. Ring colour is
+        your trust decision, fill is whether it answered in the last fifteen
+        minutes, the badge counts open ports. Tap a device for detail.
+      </p>
+    </div>
+    <div id="netmap-body">
+      <div class="placeholder">Loading map&hellip;</div>
+    </div>
+  </section>
+
+  <section class="section" id="activity" data-tab="overview">
+    <div class="section__head">
+      <h2 class="section__title">What the agent did</h2>
+      <p class="section__note">
+        Every collection run in the last 24 hours, by kind. A failed or
+        refused run is drawn, not dropped: the gaps in this chart are the
+        gaps in everything above it.
+      </p>
+    </div>
+    <div id="activity-body">
+      <div class="placeholder">Loading activity&hellip;</div>
+    </div>
+  </section>
+
+  <!-- ============================================================= network -->
+
+  <section class="section" id="netstats" data-tab="network">
+    <div class="section__head">
+      <h2 class="section__title">Attack surface</h2>
+      <p class="section__note">
+        Open ports per device and what discovery thinks each device is.
+        IoT gear is the usual soft spot: it gets the same scan, at the same
+        polite timing, and its classification is a guess with a stated
+        confidence.
+      </p>
+    </div>
+    <div id="netstats-body">
+      <div class="placeholder">Loading&hellip;</div>
+    </div>
+  </section>
+
+  <section class="section" id="devices" data-tab="network">
+    <div class="section__head">
+      <h2 class="section__title">Devices</h2>
+      <p class="section__note">
+        Everything discovered on the network, most recently seen first. Trust is
+        a decision you record, not something the agent infers.
+      </p>
+    </div>
+    <div id="devices-body">
+      <div class="placeholder">Loading devices&hellip;</div>
+    </div>
+  </section>
+
+  <section class="section" id="availability" data-tab="network">
+    <div class="section__head">
+      <h2 class="section__title">Availability</h2>
+      <p class="section__note">
+        Reachability and round-trip time over the last 24 hours. Gaps are
+        rendered as gaps &mdash; a bucket with no samples is not a bucket at
+        100%.
+      </p>
+    </div>
+    <div id="availability-body">
+      <div class="placeholder">Loading availability&hellip;</div>
+    </div>
+  </section>
+
+  <!-- ================================================================ host -->
+
+  <section class="section" id="host-posture" data-tab="host">
+    <div class="section__head">
+      <h2 class="section__title">Host posture</h2>
+      <p class="section__note">
+        Read-only checks against this machine. Every check reports one of three
+        outcomes &mdash; and &ldquo;could not run&rdquo; is one of them.
+      </p>
+    </div>
+    <div id="host-posture-body">
+      <div class="placeholder">Loading host posture&hellip;</div>
+    </div>
+  </section>
+
+  <section class="section" id="attack" data-tab="host">
+    <div class="section__head">
+      <h2 class="section__title">ATT&amp;CK coverage</h2>
+      <p class="section__note">
+        Which techniques the open alerts have evidence for, on the full
+        tactic list. The empty columns are the point: a coverage view that
+        only lists what it found tells you nothing about what it cannot see.
+      </p>
+    </div>
+    <div id="attack-body">
+      <div class="placeholder">Loading coverage&hellip;</div>
+    </div>
+  </section>
+
+  <!-- ============================================================== alerts -->
+
+  <section class="section" id="alerts" data-tab="alerts">
+    <div class="section__head">
+      <h2 class="section__title">Alerts</h2>
+      <p class="section__note">
+        Findings after correlation, open first. Where several rules fired on
+        the same thing, the most severe is shown and the rest are folded into
+        it. Acknowledged and resolved alerts stay listed so triage is visible
+        and reversible.
+      </p>
+    </div>
+    <div id="alerts-body">
+      <div class="placeholder">Loading alerts&hellip;</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ identity -->
+
+  <section class="section" id="identity" data-tab="identity">
+    <div class="section__head">
+      <h2 class="section__title">Identity posture</h2>
+      <p class="section__note">
+        Your own accounts &mdash; the mailbox every password reset flows
+        through, the profiles a phisher would clone. Nothing here is read
+        from a provider: you attest what you verified, and an attestation
+        older than the review window rots back to <em>unknown</em>.
+      </p>
+    </div>
+    <div id="identity-body">
+      <div class="placeholder">Loading identity posture&hellip;</div>
+    </div>
+  </section>
+
+  <!-- =============================================================== agent -->
+
+  <section class="section" id="agent" data-tab="agent">
+    <div class="section__head">
+      <h2 class="section__title">The agent itself</h2>
+      <p class="section__note">
+        Its authorisation, its own safety posture, the noise it has sent onto
+        the network, and every rule it runs with the blind spot each one
+        admits to. A monitoring tool that cannot account for itself is not
+        one you should trust about anything else.
+      </p>
+    </div>
+    <div id="agent-body">
+      <div class="placeholder">Loading agent report&hellip;</div>
+    </div>
+  </section>
+
+</main>
+
+<div id="device-sheet" class="sheet" hidden></div>
+<div id="token-gate" class="gate" hidden></div>
+
+<script src="/viz.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

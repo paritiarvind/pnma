@@ -1,0 +1,120 @@
+### PNMA configuration -- copy to config/pnma.toml and edit.
+###
+### `pnma init` will generate this for you by fingerprinting the network you
+### are currently attached to. Doing it by hand is fine too.
+###
+### config/pnma.toml is gitignored on purpose. Your gateway MAC and SSID are
+### enough to locate your home via public wardriving databases, so this file
+### must never be committed. See THREAT_MODEL.md.
+
+# Path to the SQLite database. Both the collector and the API open this.
+database = "data/pnma.db"
+
+[network]
+# The ONLY network this agent will ever touch. This is configuration and never
+# a command-line flag -- see pnma/guard.py for why that distinction matters.
+cidr = "192.168.1.0/24"
+gateway_ip = "192.168.1.1"
+
+# The gateway MAC is the fingerprint that identifies *your* network as opposed
+# to any other network using the same private range. Half the cafes on earth
+# hand out 192.168.1.0/24; the gateway MAC is what makes this yours.
+# Find it with:  arp -a       (after pinging the gateway once)
+gateway_mac = "aa:bb:cc:dd:ee:ff"
+
+# Ranges to never touch even if they overlap the CIDR above. Virtualisation
+# host-only adapters (VMware, VirtualBox, WSL, Docker) belong here -- otherwise
+# your inventory fills with phantom hosts that are not on your network at all.
+exclude_cidrs = ["192.168.56.0/24"]
+
+# Individual addresses to leave alone. Put fragile devices here: some IoT gear,
+# smart plugs and network printers are documented to crash or emit pages of
+# garbage when port-scanned.
+exclude_ips = []
+
+[guard]
+# Refuse to run unless the gateway MAC matches the fingerprint above. This is
+# what stops the agent scanning an office or hotel network when the laptop
+# moves. Leave this on.
+enforce_gateway_mac = true
+
+# Emergency bypass for first-run setup. Turning this on disables scope
+# enforcement entirely -- the agent will scan whatever network it finds itself
+# attached to. Do not leave it enabled.
+allow_unknown_network = false
+
+[api]
+# Loopback only, by default and on purpose. The PNMA database is a complete map
+# of your network: every device, every open port, every weak service. That is a
+# finished reconnaissance report. Do not serve it to your LAN without thinking
+# very hard about it first.
+bind = "127.0.0.1"
+port = 8787
+
+[collector]
+arp_table_interval_s  = 30      # read the OS ARP cache (passive, no packets)
+ping_interval_s       = 60      # ICMP availability + latency
+port_scan_interval_s  = 3600    # nmap service inventory
+detection_interval_s  = 60      # run the detection rules
+
+# Host posture: read THIS machine's security configuration into host_facts.
+# Windows-only -- on macOS/Linux the collector declines and says so rather than
+# reporting a clean host it never examined.
+#
+# The interval is thirty minutes because of cost, not staleness: one run spawns
+# seven PowerShell processes. Posture is configuration state and moves slowly,
+# so there is nothing to gain from checking it more often.
+#
+# Unelevated runs are supported and are the normal case. Checks that need
+# Administrator come back "unknown" -- stored and surfaced as unmeasured, never
+# as passing.
+host_posture            = true
+host_posture_interval_s = 1800
+
+# Passive ARP/DHCP sniffing. Requires Administrator/root and Npcap (Windows) or
+# libpcap (Linux/macOS). This captures ARP and DHCP *headers only* -- never
+# payloads, never DNS, never anything anyone browses.
+#
+# It is worth the elevated privilege: DHCP option 55 fingerprinting is what
+# keeps device identity stable across MAC randomisation, and without it the
+# new-device detector degrades into noise. Set false to run unprivileged with
+# weaker identity resolution.
+passive_capture = true
+
+# Capture interface. Empty = let scapy choose. On Windows this is an NPF device
+# name; list them with:  python -c "import scapy.all as s; print(s.get_if_list())"
+interface = ""
+
+[scan]
+enabled = true
+nmap_path = "nmap"
+
+# nmap -T2 (polite). Deliberately not the -T4 you see in every tutorial:
+# aggressive timing and version probes crash embedded devices. This is your own
+# home network, and the printer is not a CTF box.
+timing = 2
+top_ports = 100
+
+# Service/version detection (-sV) sends far more intrusive probes. Off by
+# default for the reason above. Turn it on only for hosts you know tolerate it.
+service_detection = false
+
+[retention]
+# Observations, availability samples and scan logs older than this are pruned.
+# Unbounded growth is a self-inflicted outage; it is also a privacy control,
+# because presence timestamps reveal when people are home.
+days = 30
+
+[alerting]
+# Alerts always land in the dashboard and the local log.
+local_log = true
+
+# Outbound alerting is OFF by default and must be enabled deliberately.
+#
+# Auto-start, plus Administrator, plus network reconnaissance, plus outbound
+# webhook egress is -- accurately -- the behavioural profile of a remote access
+# trojan. That is how EDR will score it and how a stranger reading this repo
+# should read it. If you enable it, put the URL in the OS credential store
+# rather than here; see SETUP.md.
+webhook_enabled = false
+webhook_url = ""

@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# Anything below identifies your actual home network. Publishing a gateway MAC
+# or SSID is enough to locate your home address via public wardriving
+# databases (WiGLE, and the location services baked into every phone OS).
+#
+# Screenshots and sample data for the README and the write-up come from the
+# synthetic seed generator (`pnma seed`), never from a live database.
+# See THREAT_MODEL.md, "Publishing risk".
+# ---------------------------------------------------------------------------
+config/pnma.toml
+config/*.local.toml
+# Anchored to the repo root on purpose. Unanchored, `data/` also matches
+# `pnma/data/`, which is where `pnma oui-update` writes the vendored IEEE
+# table -- the one file in a directory called data that is meant to ship.
+# Stray databases anywhere are still caught by the *.db rules below.
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.pcap
+*.pcapng
+logs/
+*.log
+
+# Secrets never belong in the repo. Webhook URLs go in the OS credential store.
+.env
+.env.*
+secrets.toml
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Host forensics output. Contains this machine's hostname, LAN address,
+# installed software versions, and copies of whatever was investigated --
+# the host-data equivalent of a live capture. Same rule applies: it never
+# reaches the public repo. Figures for the write-up come from the seed.
+# ---------------------------------------------------------------------------
+kms-evidence/
+host-evidence/
+*.evtx
