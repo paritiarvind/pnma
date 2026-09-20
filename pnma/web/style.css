@@ -1695,3 +1695,66 @@ button.matrix__cell { font: inherit; color: inherit; text-align: left; cursor: p
 button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
 .triage__mitre { font: inherit; cursor: pointer; background: var(--accent-bg, var(--bg-inset)); border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 4px 12px; font-size: 12px; }
 .triage__mitre:hover { background: var(--bg-inset); }
+
+/* ---- overview: executive posture banner --------------------------------- */
+
+/* The one-glance verdict at the top of Overview. A left status rail carries
+ * the colour; the icon + word carry the meaning without it. Kept to the same
+ * three-state vocabulary (ok/warn/finding) plus critical, so it never becomes
+ * a fourth colour language on the page. */
+.pb {
+  background: var(--bg-raised); border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong); border-radius: var(--radius);
+  padding: var(--s3); margin-bottom: var(--s3); box-shadow: var(--shadow-raised);
+  animation: pnma-rise-in 220ms ease-out both;
+}
+.pb--critical { border-left-color: var(--sev-critical); }
+.pb--high     { border-left-color: var(--sev-high); }
+.pb--warn     { border-left-color: var(--warn); }
+.pb--ok       { border-left-color: var(--ok); }
+.pb__head { display: flex; align-items: center; gap: var(--s3); }
+.pb__badge {
+  flex: none; width: 40px; height: 40px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 20px; font-family: var(--mono);
+  background: var(--bg-inset); color: var(--fg);
+}
+.pb--critical .pb__badge { background: var(--finding-bg); color: var(--sev-critical); }
+.pb--high .pb__badge { background: rgba(210, 153, 34, 0.15); color: var(--sev-high); }
+.pb--warn .pb__badge { background: rgba(210, 153, 34, 0.15); color: var(--warn); }
+.pb--ok .pb__badge { background: var(--ok-bg); color: var(--ok); }
+.pb__verdict { font-size: 18px; font-weight: 700; line-height: 1.2; }
+.pb__summary { color: var(--fg-muted); font-size: 13px; margin-top: 2px; }
+.pb__meta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.pb__updated { color: var(--fg-dim); font-size: 11px; white-space: nowrap; }
+.pb__all {
+  font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  background: none; border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: 3px 12px; color: var(--fg-muted);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.pb__all:hover { color: var(--fg); border-color: var(--accent); }
+.pb__chips { display: flex; flex-wrap: wrap; gap: var(--s1); margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line); }
+.pb__chip {
+  font: inherit; font-size: 12px; cursor: pointer; text-align: left;
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  background: var(--bg-inset); border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: var(--radius-sm); padding: 5px 10px; color: var(--fg);
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+.pb__chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+.pb__chip--critical { border-left-color: var(--sev-critical); }
+.pb__chip--high { border-left-color: var(--sev-high); }
+.pb__chipsev {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  font-family: var(--mono); color: var(--fg-dim); flex: none;
+}
+.pb__chip--critical .pb__chipsev { color: var(--sev-critical); }
+.pb__chip--high .pb__chipsev { color: var(--sev-high); }
+.pb__chip:focus-visible, .pb__all:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+@media (max-width: 640px) {
+  .pb__head { flex-wrap: wrap; }
+  .pb__meta { margin-left: 0; flex-direction: row; width: 100%; justify-content: space-between; align-items: center; }
+  .pb__chip { max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .pb { animation: none; } }

@@ -536,15 +536,69 @@
     return c;
   }
 
+  /* Executive posture banner: the one-glance verdict both SOC-dashboard
+   * playbooks put at the very top -- an overall status, the numbers behind
+   * it, and the most severe open alerts as chips that jump straight into the
+   * drawer. Verdict is by icon + word + colour, never colour alone, so it
+   * survives a colour-blind reader and a greyscale screenshot. */
+  function postureVerdict(counts, gaps) {
+    if (counts.critical) return { key: 'critical', word: 'Action needed now', icon: '!' };
+    if (counts.high) return { key: 'high', word: 'Needs attention', icon: '!' };
+    if (gaps) return { key: 'warn', word: 'Review recommended', icon: '~' };
+    return { key: 'ok', word: 'Healthy', icon: '✓' };
+  }
+
+  function postureBanner(summary, openAlerts, gaps, devices) {
+    const counts = summary.alerts.by_severity || {};
+    const v = postureVerdict(counts, gaps);
+    const online = devices.filter((d) => d.online).length;
+    const bits = [];
+    for (const s of ['critical', 'high', 'medium', 'low']) if (counts[s]) bits.push(counts[s] + ' ' + s);
+    const summaryLine = (bits.length ? bits.join(', ') + ' open' : 'no open alerts')
+      + ' · ' + gaps + ' ' + plural(gaps, 'gap') + ' to close'
+      + ' · ' + devices.length + ' ' + plural(devices.length, 'device') + ', ' + online + ' online';
+
+    // The most severe open alerts, as chips into the drawer.
+    const top = openAlerts
+      .filter((a) => a.severity === 'critical' || a.severity === 'high')
+      .sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity))
+      .slice(0, 4);
+    const chips = top.map((a) => {
+      const c = el('button', { class: 'pb__chip pb__chip--' + a.severity, type: 'button',
+                               title: 'Open this alert' },
+        [el('span', { class: 'pb__chipsev', text: a.severity }), a.title || a.rule_id]);
+      c.addEventListener('click', () => { if (PNMA.openAlert) PNMA.openAlert(a.id); });
+      return c;
+    });
+
+    const head = el('div', { class: 'pb__head' }, [
+      el('div', { class: 'pb__badge', text: v.icon }),
+      el('div', {}, [
+        el('div', { class: 'pb__verdict', text: v.word }),
+        el('div', { class: 'pb__summary', text: summaryLine }),
+      ]),
+      el('div', { class: 'pb__meta' }, [
+        el('span', { class: 'pb__updated', text: 'updated ' + relativeTime(summary.generated_at || Date.now() / 1000) }),
+        (counts.critical || counts.high)
+          ? (() => { const b = el('button', { class: 'pb__all', type: 'button', text: 'All alerts →' });
+                     b.addEventListener('click', () => showTab('alerts')); return b; })()
+          : null,
+      ]),
+    ]);
+    const card = el('div', { class: 'pb pb--' + v.key }, [head]);
+    if (chips.length) card.appendChild(el('div', { class: 'pb__chips' }, chips));
+    return card;
+  }
+
   async function loadOverview() {
     const body = document.getElementById('overview-body');
     try {
       const raw = await Promise.all([
         getRaw('/api/summary'), getRaw('/api/host'), getRaw('/api/identity'),
-        getRaw('/api/devices'), getRaw('/api/sensors'),
+        getRaw('/api/devices'), getRaw('/api/sensors'), getRaw('/api/alerts?status=open&limit=100'),
       ]);
       if (unchanged('overview', raw.map((r) => r.text).join('\u0000'), body.firstChild)) return;
-      const [summary, host, identity, devices, sensors] = raw.map((r) => r.json);
+      const [summary, host, identity, devices, sensors, alertList] = raw.map((r) => r.json);
       for (const d of devices.devices) PNMA.learnName(d.hostname);
       for (const s of sensors.sensors) PNMA.learnName(s.hostname);
 
@@ -624,6 +678,7 @@
       ]);
 
       clear(body);
+      body.appendChild(postureBanner(summary, alertList.alerts || [], gaps.length, devices.devices));
       body.appendChild(rings);
       body.appendChild(tiles);
       body.appendChild(gapList);

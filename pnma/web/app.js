@@ -1793,6 +1793,22 @@ Object.assign(window.PNMA, { el, clear, plural, relativeTime, stateChip, severit
 // driven from a fixture during development without standing up the API.
 window.PNMA.renderAlerts = renderAlerts;
 window.PNMA.filterAlertsByTechnique = filterAlertsByTechnique;
+
+/* Open one alert's drawer from anywhere (the Overview posture banner uses
+ * this). Switches to the Alerts tab, then opens the drawer for that id from
+ * the last loaded payload -- loading it first if the tab has not yet. */
+function openAlertById(id) {
+  if (window.PNMA.showTab) window.PNMA.showTab('alerts');
+  const open = () => {
+    const alerts = lastAlertsPayload ? (JSON.parse(lastAlertsPayload).alerts || []) : [];
+    const a = alerts.find((x) => String(x.id) === String(id));
+    if (a) openAlertSheet(normaliseAlerts([a])[0], alertAction);
+    else if (window.PNMA.showTab) window.PNMA.showTab('alerts', 'alert:' + id);
+  };
+  if (lastAlertsPayload) open();
+  else loadAlerts(true).then(open);
+}
+window.PNMA.openAlert = openAlertById;
 window.PNMA.renderDevices = renderDevices;
 window.PNMA.renderAvailability = renderAvailability;
 
