@@ -61,6 +61,7 @@ KNOWN_SECRETS = {
     "abuseipdb_api_key": "AbuseIPDB API key (enrichment)",
     "otx_api_key": "AlienVault OTX API key (enrichment)",
     "webhook_url": "Alert webhook URL",
+    "ntfy_topic_url": "ntfy topic URL for push-to-phone alerts",
     "hibp_api_key": "Have I Been Pwned API key (identity breach lookups)",
     "dashboard_token": "Bearer token the dashboard requires when bound off loopback",
 }

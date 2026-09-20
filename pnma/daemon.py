@@ -46,6 +46,7 @@ import uuid
 from .audit import Auditor, NoiseBudget
 from .collectors.arp_table import ArpTableCollector
 from .collectors.discovery import DiscoveryCollector
+from .collectors.honeypot import HoneypotCollector
 from .collectors.host_windows import (
     HostCollectorUnavailable,
     HostPostureCollector,
@@ -57,6 +58,7 @@ from .config import Config
 from .db import Database
 from .detections.base import DetectionEngine
 from .detections.rules import default_rules
+from . import deliver, notify, secrets, vulns
 from .guard import ScopeGuard
 
 log = logging.getLogger(__name__)
@@ -179,12 +181,29 @@ class Collector:
             else:
                 self.host_status = reason
 
+        # Honeypot ingestion: reads a Cowrie log if one is configured. A
+        # passive file reader, so it needs no privilege and no scope check.
+        self.honeypot: HoneypotCollector | None = None
+        if config.honeypot.enabled and config.honeypot.cowrie_log_path:
+            self.honeypot = HoneypotCollector(
+                self.db,
+                self.sensor_id.replace("net-", "hp-"),
+                config.honeypot.cowrie_log_path,
+            )
+
         # `default_rules()` includes the three host posture rules. They are
         # inert until something populates `host_facts`, so a non-Windows host
         # runs them harmlessly rather than needing a second rule set.
         self.engine = DetectionEngine(
             self.db, default_rules(), learning_window_h=1
         )
+
+        # If a KEV cache exists from a previous refresh, mark which advisory
+        # classes CISA currently lists as exploited. Offline-safe: no cache
+        # just leaves every advisory at kev_confirmed=None.
+        vulns.annotate_with_kev(config.database)
+        self._last_detection_ok: float = time.time()
+        self._heartbeat_warned = False
 
     @staticmethod
     def _stable_sensor_id() -> str:
@@ -309,6 +328,24 @@ class Collector:
 
     def _run_detections(self) -> None:
         findings = self.engine.run_all()
+        self._last_detection_ok = time.time()
+        # Local toast for anything new at or above the configured floor. Off
+        # unless the operator enabled it; never raises (see pnma.notify).
+        if self.config.alerting.toast_enabled and findings:
+            try:
+                notify.toast_findings(
+                    findings, minimum=self.config.alerting.toast_min_severity
+                )
+            except Exception:  # noqa: BLE001 - notification must not stop detection
+                log.exception("toast delivery failed")
+        # Outbound delivery (webhook / ntfy-to-phone). Best-effort, never
+        # raises, and each attempt is recorded in scan_runs so the operator can
+        # see whether the doorbell is actually ringing.
+        if findings:
+            try:
+                self._deliver_outbound(findings)
+            except Exception:  # noqa: BLE001 - delivery must not stop detection
+                log.exception("outbound alert delivery failed")
         for finding in findings:
             # The escalation playbook: a device that looks suspicious gets a
             # targeted service inventory, so the next alert has evidence behind
@@ -316,6 +353,35 @@ class Collector:
             if finding.triggers_triage_scan and finding.device_id:
                 if self.config.scan.enabled and self.portscan.available():
                     self.portscan.triage_scan(finding.device_id)
+
+    def _deliver_outbound(self, findings) -> None:
+        """Send new findings to any enabled outbound channel. Best-effort."""
+        al = self.config.alerting
+        minimum = al.outbound_min_severity
+        if al.webhook_enabled:
+            url = secrets.get_secret("webhook_url")
+            if url:
+                r = deliver.send_webhook(url, findings, minimum=minimum)
+                if r.get("sent"):
+                    self.db.log_scan("alert_webhook", "webhook",
+                                     result=f"delivered {r.get('count', 0)} alerts")
+                elif "reason" not in r:
+                    self.db.log_scan("alert_webhook", "webhook",
+                                     error=r.get("detail", "failed"))
+            else:
+                log.warning("webhook enabled but no webhook_url secret set")
+        if al.ntfy_enabled:
+            topic = secrets.get_secret("ntfy_topic_url")
+            if topic:
+                r = deliver.send_ntfy(topic, findings, minimum=minimum)
+                if r.get("sent"):
+                    self.db.log_scan("alert_ntfy", "ntfy",
+                                     result=f"delivered {r.get('count', 0)} alerts")
+                elif "reason" not in r:
+                    self.db.log_scan("alert_ntfy", "ntfy",
+                                     error=r.get("detail", "failed"))
+            else:
+                log.warning("ntfy enabled but no ntfy_topic_url secret set")
 
     def _collect_host(self) -> None:
         """Read this machine's posture into `host_facts`, and record that we did.
@@ -398,6 +464,70 @@ class Collector:
 
     # -- lifecycle ----------------------------------------------------------
 
+    def _check_heartbeat(self) -> None:
+        """Dead-man's switch: notice when the collector itself goes quiet.
+
+        Every other panel on the dashboard is downstream of a detection pass.
+        If detections stop -- a hung scan, a crashed thread, a wedged host
+        query -- the dashboard does not turn red, it simply stops changing,
+        which is the failure mode most easily mistaken for "all clear". This
+        raises one alert when the gap since the last successful detection pass
+        exceeds the configured timeout, and toasts it if toasts are on.
+        """
+        timeout = self.config.alerting.heartbeat_timeout_s
+        if timeout <= 0:
+            return
+        gap = time.time() - self._last_detection_ok
+        if gap <= timeout:
+            self._heartbeat_warned = False
+            return
+        if self._heartbeat_warned:
+            return
+        self._heartbeat_warned = True
+        mins = int(gap // 60)
+        self.db.raise_alert(
+            dedup_key="heartbeat:detection_stalled",
+            rule_id="collector_heartbeat",
+            severity="high",
+            title="PNMA has stopped running detections",
+            description=(
+                f"No detection pass has completed in {mins} minutes "
+                f"(threshold {timeout // 60}). Every panel on the dashboard is "
+                "downstream of this, so a silent collector looks exactly like a "
+                "clean network.\n\n"
+                "WHY THIS MATTERS: this is the monitor watching itself. A gap "
+                "here means a hung scan, a crashed thread, or the collector "
+                "process being gone.\n\n"
+                "NEXT STEP: check that `pnma collect` is still running and read "
+                "logs/collect.err.log for what stalled it. Restart the "
+                "collector if it has exited."
+            ),
+            evidence={"gap_seconds": int(gap), "threshold_seconds": timeout},
+        )
+        log.error("HEARTBEAT: no detection pass in %d minutes", mins)
+        if self.config.alerting.toast_enabled:
+            try:
+                notify.toast(
+                    "PNMA: collector stalled",
+                    f"No detection run in {mins} min. Check that pnma collect is running.",
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("heartbeat toast failed")
+
+    def _refresh_kev(self) -> None:
+        """Pull CISA KEV once (opt-in), then re-annotate the catalogue."""
+        if not self.config.alerting.cve_feed_enabled:
+            return
+        result = vulns.refresh_kev(self.config.database)
+        if result.get("ok"):
+            vulns.annotate_with_kev(self.config.database)
+            self.db.log_scan(
+                "cve_feed_refresh", "cisa-kev",
+                result=f"{result.get('count', 0)} CVEs in catalogue",
+            )
+        else:
+            self.db.log_scan("cve_feed_refresh", "cisa-kev", error=result.get("error", "failed"))
+
     def run(self) -> int:
         log.info("PNMA collector %s starting on %s", VERSION, platform.system())
 
@@ -439,6 +569,18 @@ class Collector:
         self._scheduler.every(cc.detection_interval_s, self._run_detections, "detect")
         self._scheduler.every(GUARD_RECHECK_S, self._recheck_guard, "guard_recheck")
         self._scheduler.every(PRUNE_INTERVAL_S, self._prune, "prune")
+        # Heartbeat check runs on the detection cadence: frequent enough to
+        # notice a stall promptly, cheap enough to be free.
+        self._scheduler.every(cc.detection_interval_s, self._check_heartbeat, "heartbeat")
+        if self.honeypot is not None:
+            self._scheduler.every(
+                self.config.honeypot.interval_s, self.honeypot.run_once, "honeypot"
+            )
+            log.info("honeypot ingestion enabled: %s", self.config.honeypot.cowrie_log_path)
+        # KEV refresh at boot (once), then daily. Both no-ops unless enabled.
+        if self.config.alerting.cve_feed_enabled:
+            self._refresh_kev()
+            self._scheduler.every(86400, self._refresh_kev, "cve_feed_refresh")
         if self.config.scan.enabled:
             self._scheduler.every(
                 cc.port_scan_interval_s, self.portscan.run_once, "port_scan"

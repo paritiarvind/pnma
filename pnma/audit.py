@@ -366,9 +366,17 @@ class Auditor:
         )
         add(
             "Outbound alerting off",
-            not cfg.alerting.webhook_enabled,
-            "Auto-start + elevation + recon + webhook egress is the behavioural "
-            "profile of a RAT.",
+            not (cfg.alerting.webhook_enabled or cfg.alerting.ntfy_enabled),
+            "Auto-start + elevation + recon + webhook/push egress is the "
+            "behavioural profile of a RAT. (Local toast does not count -- it "
+            "never leaves this machine.)",
+        )
+        add(
+            "No outbound feed egress",
+            not cfg.alerting.cve_feed_enabled,
+            "The CVE feed reaches out to cisa.gov at start-up. The bundled "
+            "catalogue works offline; the feed only annotates it. Enabled here "
+            "means this agent makes an outbound request on every boot.",
         )
         add(
             "Retention bounded",

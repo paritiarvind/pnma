@@ -14,6 +14,7 @@ import time
 from ..collectors.portscan import C2_INDICATOR_PORTS, classify_port
 from ..oui import describe as describe_vendor
 from ..oui import is_iot_vendor
+from .. import vulns
 from .base import Detection, DetectionContext, Finding, downgrade, upgrade
 from .host_rules import host_rules
 from .identity_rules import identity_rules
@@ -536,9 +537,13 @@ class ProfileDeviationDetection(Detection):
                 Finding(
                     dedup_key=f"profile:{row['device_id']}:{row['port']}",
                     severity=severity,
+                    # The class label only adds information when it differs
+                    # from the device's own name -- "Security Camera (Security
+                    # Camera)" is the label read back to the reader twice.
                     title=(
-                        f"{name} ({baseline.label}) is offering "
-                        f"{row['port']}/{row['proto']}"
+                        f"{name}"
+                        + (f" ({baseline.label})" if baseline.label.lower() != str(name).lower() else "")
+                        + f" is offering {row['port']}/{row['proto']}"
                         + (f" -- {row['service']}" if row["service"] else "")
                     ),
                     description=(
@@ -578,6 +583,86 @@ class ProfileDeviationDetection(Detection):
         return findings
 
 
+
+# ---------------------------------------------------------------------------
+# 7. Known-exploited-vulnerability exposure (advisory, catalogue-driven)
+# ---------------------------------------------------------------------------
+class CVEExposureDetection(Detection):
+    rule_id = "cve_exposure"
+    name = "Device exposed to a known-exploited vulnerability class"
+    severity = "high"
+    mitre_id = "T1190"
+    mitre_name = "Exploit Public-Facing Application"
+    blind_spots = (
+        "Matches on exposure class (open port, service, vendor, device class) "
+        "against a curated catalogue, not on a version-exact CVE test -- it "
+        "says 'this surface is exploited in the wild', not 'this exact firmware "
+        "is vulnerable', so it can over-report a patched device and cannot see "
+        "a vulnerability that needs authenticated probing to confirm. The "
+        "catalogue is bundled and works offline; enabling the CVE feed keeps it "
+        "current with CISA's Known Exploited list. It never tests a device by "
+        "exploiting it -- confirmation is a lab exercise (see PENTEST_LAB.md)."
+    )
+
+    def evaluate(self, ctx: DetectionContext) -> list[Finding]:
+        # Rebuild the same device+ports shape the API and catalogue expect.
+        devices = []
+        for row in ctx.db.query("SELECT * FROM devices"):
+            d = dict(row)
+            d["open_ports"] = [
+                dict(p) for p in ctx.db.query(
+                    "SELECT port, proto, service, product, risk FROM ports "
+                    "WHERE device_id = ? AND closed_at IS NULL",
+                    (d["device_id"],),
+                )
+            ]
+            devices.append(d)
+
+        findings: list[Finding] = []
+        for hit in vulns.match_devices(devices):
+            d = hit["device"]
+            name = d.get("label") or d.get("hostname") or d.get("ip") or d["device_id"]
+            for a in hit["advisories"]:
+                kev = ""
+                if a.kev_confirmed:
+                    kev = (
+                        "\n\nThis vulnerability class is on CISA's Known "
+                        "Exploited Vulnerabilities list -- it is confirmed "
+                        "exploited in the wild right now, not theoretical."
+                    )
+                description = (
+                    f"{a.summary}\n\n"
+                    f"WHY THIS MATTERS: {a.impact}\n\n"
+                    f"NEXT STEP: {a.remediation}\n\n"
+                    f"FOR LEARNING: {a.sandbox_note} This is a lab exercise on a "
+                    f"target you built to be attacked -- never against this "
+                    f"device. See docs/PENTEST_LAB.md.\n\n"
+                    f"REFERENCES: {', '.join(a.references)}"
+                    f"{kev}"
+                )
+                findings.append(
+                    Finding(
+                        dedup_key=f"cve:{d['device_id']}:{a.advisory_id}",
+                        severity=a.severity,
+                        title=f"{name}: {a.title}",
+                        description=description,
+                        device_id=d["device_id"],
+                        mitre_id=a.mitre_id or self.mitre_id,
+                        mitre_name=a.mitre_name or self.mitre_name,
+                        evidence={
+                            "advisory": a.advisory_id,
+                            "references": a.references,
+                            "kev_confirmed": a.kev_confirmed,
+                            "open_ports": [p["port"] for p in d["open_ports"]],
+                        },
+                        # Share the correlation key of the port-based rules so a
+                        # device already flagged by c2_indicator/profile_deviation
+                        # for the same port folds together rather than stacking.
+                        correlation_key=None,
+                    )
+                )
+        return findings
+
 def default_rules() -> list[Detection]:
     """Every rule this build runs, network and host.
 
@@ -600,4 +685,5 @@ def default_rules() -> list[Detection]:
         C2IndicatorDetection(),
         ProfileDeviationDetection(),
         AvailabilityDetection(),
+        CVEExposureDetection(),
     ] + host_rules() + identity_rules()

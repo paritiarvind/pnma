@@ -94,6 +94,38 @@ class AlertingConfig:
     local_log: bool = True
     webhook_enabled: bool = False
     webhook_url: str = ""
+    # Push-to-phone via ntfy. Off by default; the topic URL is a secret
+    # (ntfy_topic_url) read from the OS credential store, not from here.
+    ntfy_enabled: bool = False
+    # Floor for every OUTBOUND channel (webhook + ntfy). The dashboard and the
+    # local log always get everything; only the outbound doorbells are gated,
+    # so a low-severity hygiene finding does not buzz a phone.
+    outbound_min_severity: str = "high"
+    # Local Windows toast for a new alert at or above `toast_min_severity`.
+    # Off by default like every other delivery channel, but when on it is the
+    # one that adds no egress and no standing config a stranger could abuse --
+    # it only ever notifies the person already at the machine. See pnma.notify.
+    toast_enabled: bool = False
+    toast_min_severity: str = "high"
+    # Refresh the known-exploited-vulnerability catalogue from CISA's KEV feed
+    # at collector start. Egress -- off by default like every outbound path.
+    # The bundled catalogue works offline regardless; this only annotates it
+    # with what CISA currently lists as exploited in the wild.
+    cve_feed_enabled: bool = False
+    # Dead-man's switch: warn if the collector has not completed a detection
+    # pass in this long. Silence is the most dangerous state a monitor has;
+    # this is the check that notices the monitor itself stopped. 0 disables.
+    heartbeat_timeout_s: int = 900
+
+
+@dataclass
+class HoneypotConfig:
+    # Ingest a Cowrie honeypot's JSON log as a PNMA sensor. Off unless a log
+    # path is given. Passive file read -- no egress. The honeypot itself must
+    # run on an isolated segment (see docs/PENTEST_LAB.md); PNMA only reads it.
+    enabled: bool = False
+    cowrie_log_path: str = ""
+    interval_s: int = 60
 
 
 @dataclass
@@ -104,6 +136,7 @@ class Config:
     collector: CollectorConfig = field(default_factory=CollectorConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
     alerting: AlertingConfig = field(default_factory=AlertingConfig)
+    honeypot: HoneypotConfig = field(default_factory=HoneypotConfig)
     database: str = "data/pnma.db"
     retention_days: int = 30
 
@@ -132,10 +165,21 @@ class Config:
             collector=CollectorConfig(**raw.get("collector", {})),
             scan=ScanConfig(**raw.get("scan", {})),
             alerting=AlertingConfig(**raw.get("alerting", {})),
+            honeypot=HoneypotConfig(**raw.get("honeypot", {})),
             database=raw.get("database", "data/pnma.db"),
             retention_days=raw.get("retention", {}).get("days", 30),
         )
         cfg.validate()
+        if cfg.alerting.toast_min_severity not in ("info", "low", "medium", "high", "critical"):
+            raise ConfigError(
+                f"[alerting].toast_min_severity = {cfg.alerting.toast_min_severity!r} "
+                "must be one of: info, low, medium, high, critical"
+            )
+        if cfg.alerting.outbound_min_severity not in ("info", "low", "medium", "high", "critical"):
+            raise ConfigError(
+                f"[alerting].outbound_min_severity = {cfg.alerting.outbound_min_severity!r} "
+                "must be one of: info, low, medium, high, critical"
+            )
         return cfg
 
     def validate(self) -> None:

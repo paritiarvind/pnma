@@ -118,3 +118,39 @@ local_log = true
 # rather than here; see SETUP.md.
 webhook_enabled = false
 webhook_url = ""
+
+# Local Windows toast notification for a new alert. No egress -- it only ever
+# notifies the person already at this machine -- so it is the one outbound-ish
+# channel that costs nothing on the agent's own safety posture. Still off by
+# default; set toast_enabled = true to turn it on.
+toast_enabled = false
+toast_min_severity = "high"   # info | low | medium | high | critical
+
+# Dead-man's switch: warn if no detection pass completes within this many
+# seconds. The check that notices the monitor itself has stopped. 0 disables.
+heartbeat_timeout_s = 900
+
+# Known-exploited-vulnerability feed. The bundled advisory catalogue works
+# fully offline; enabling this refreshes it from CISA's KEV list at start-up
+# (and daily), which is outbound HTTPS to cisa.gov. Off by default.
+cve_feed_enabled = false
+
+# Push-to-phone via ntfy. The ntfy phone app subscribes to a topic; PNMA POSTs
+# new alerts to it. Self-host ntfy on your tailnet for a phone alert that never
+# leaves your own devices. The topic URL is a SECRET, not set here:
+#   pnma secrets set ntfy_topic_url        (e.g. https://ntfy.sh/your-topic)
+ntfy_enabled = false
+
+# Floor for every OUTBOUND channel (webhook + ntfy). The dashboard and local log
+# always get everything; only the phone/webhook doorbells are gated so a
+# low-severity hygiene finding does not buzz you.
+outbound_min_severity = "high"
+
+[honeypot]
+# Ingest a Cowrie honeypot's JSON log as a PNMA sensor, turning attacks on the
+# decoy into alerts on the Alerts tab. PNMA only READS the log -- run Cowrie
+# yourself, on an ISOLATED segment with no route to your real devices (see
+# docs/PENTEST_LAB.md). Off until a log path is set.
+enabled = false
+cowrie_log_path = ""     # e.g. /home/cowrie/cowrie/var/log/cowrie/cowrie.json
+interval_s = 60

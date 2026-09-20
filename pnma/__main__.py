@@ -536,6 +536,143 @@ def cmd_detections(args) -> int:
     return 0
 
 
+def cmd_vulns(args) -> int:
+    import time as _time
+
+    from . import vulns
+    from .db import Database
+
+    cfg = Config.load(args.config)
+    if args.refresh:
+        print("Refreshing from CISA KEV (outbound HTTPS)...")
+        result = vulns.refresh_kev(cfg.database)
+        if result.get("ok"):
+            print(f"  {result['count']} CVEs in catalogue.")
+        else:
+            print(f"  refresh failed: {result.get('error')}. Using bundled catalogue.")
+    vulns.annotate_with_kev(cfg.database)
+
+    db = Database(cfg.database)
+    now = _time.time()
+    devices = []
+    for row in db.query("SELECT * FROM devices"):
+        d = dict(row)
+        d["open_ports"] = [
+            dict(p) for p in db.query(
+                "SELECT port, proto, service, product, risk FROM ports "
+                "WHERE device_id = ? AND closed_at IS NULL",
+                (d["device_id"],),
+            )
+        ]
+        devices.append(d)
+    db.close()
+
+    matches = vulns.match_devices(devices)
+    if args.json:
+        print(json.dumps([
+            {
+                "device_id": m["device"]["device_id"],
+                "label": m["device"].get("label") or m["device"].get("hostname"),
+                "advisories": [
+                    {
+                        "id": a.advisory_id, "title": a.title, "severity": a.severity,
+                        "references": a.references, "kev_confirmed": a.kev_confirmed,
+                    }
+                    for a in m["advisories"]
+                ],
+            }
+            for m in matches
+        ], indent=2))
+        return 0
+
+    if not matches:
+        print("No device matches a known-exploited-vulnerability advisory. "
+              "That is not a clean bill of health -- see `pnma vulns --json` "
+              "and the catalogue's stated limits.")
+        return 0
+
+    print("Known-exploited-vulnerability exposure\n" + "=" * 58)
+    print("Matched on exposure class, not a version-exact CVE test. This says "
+          "'this surface is exploited in the wild', not 'this firmware is "
+          "vulnerable'. Confirmation is a lab exercise -- see PENTEST_LAB.md.\n")
+    for m in matches:
+        d = m["device"]
+        name = d.get("label") or d.get("hostname") or d.get("ip") or d["device_id"]
+        print(f"\n  {name}  ({d.get('ip') or 'no ip'})")
+        for a in m["advisories"]:
+            kev = "  [CISA-KEV: exploited in the wild]" if a.kev_confirmed else ""
+            print(f"    [{a.severity}] {a.title}{kev}")
+            print(f"        {a.remediation}")
+            print(f"        refs: {', '.join(a.references)}")
+    return 0
+
+
+def cmd_honeypot(args) -> int:
+    from .collectors.honeypot import HoneypotCollector
+    from .db import Database
+
+    cfg = Config.load(args.config)
+    log_path = args.log or cfg.honeypot.cowrie_log_path
+    if not log_path:
+        print("No Cowrie log path. Pass --log <path> or set [honeypot].cowrie_log_path.")
+        return 2
+    db = Database(cfg.database)
+    hp = HoneypotCollector(db, "hp-" + __import__("socket").gethostname()[:8], log_path)
+    if not hp.available():
+        print(f"Log not found: {log_path}")
+        db.close()
+        return 2
+    summary = hp.run_once()
+    db.close()
+    if not summary.get("ok"):
+        print(f"Ingest failed: {summary.get('reason')}")
+        return 1
+    print(f"Ingested {summary['sources']} source(s), {summary['logins']} login "
+          f"attempt(s), {summary['commands']} command(s). See the Alerts tab.")
+    return 0
+
+
+def cmd_notify_test(args) -> int:
+    """Send a test alert through the enabled outbound channels + local toast."""
+    from dataclasses import dataclass
+
+    from . import deliver, notify, secrets
+
+    cfg = Config.load(args.config)
+
+    @dataclass
+    class _F:
+        severity: str = "high"
+        title: str = "PNMA test alert -- if you can read this, delivery works"
+
+    findings = [_F()]
+    any_channel = False
+    if cfg.alerting.toast_enabled or args.force:
+        ok = notify.toast("PNMA test alert", "Local toast delivery works.")
+        print(f"  toast: {'sent' if ok else 'not shown (non-Windows or blocked)'}")
+        any_channel = True
+    if cfg.alerting.webhook_enabled or (args.force and secrets.get_secret('webhook_url')):
+        url = secrets.get_secret("webhook_url")
+        if url:
+            r = deliver.send_webhook(url, findings, minimum="info")
+            print(f"  webhook: {'sent' if r.get('sent') else r.get('detail', r.get('reason'))}")
+            any_channel = True
+        else:
+            print("  webhook: enabled but no webhook_url secret set")
+    if cfg.alerting.ntfy_enabled or (args.force and secrets.get_secret('ntfy_topic_url')):
+        topic = secrets.get_secret("ntfy_topic_url")
+        if topic:
+            r = deliver.send_ntfy(topic, findings, minimum="info")
+            print(f"  ntfy: {'sent' if r.get('sent') else r.get('detail', r.get('reason'))}")
+            any_channel = True
+        else:
+            print("  ntfy: enabled but no ntfy_topic_url secret set")
+    if not any_channel:
+        print("No outbound channel enabled. Enable one in config, or pass --force "
+              "to test whatever secrets are set.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="pnma",
@@ -599,6 +736,30 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("detections", help="list rules and their blind spots")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_detections)
+
+    p = sub.add_parser(
+        "vulns",
+        help="match your devices against known-exploited-vulnerability advisories",
+    )
+    p.add_argument("--json", action="store_true")
+    p.add_argument(
+        "--refresh", action="store_true",
+        help="pull CISA's Known Exploited list first (outbound HTTPS to cisa.gov)",
+    )
+    p.set_defaults(func=cmd_vulns)
+
+    p = sub.add_parser("honeypot", help="ingest a Cowrie honeypot log into alerts")
+    p.add_argument("--log", help="path to cowrie.json (overrides config)")
+    p.set_defaults(func=cmd_honeypot)
+
+    p = sub.add_parser(
+        "notify-test", help="send a test alert through the enabled delivery channels"
+    )
+    p.add_argument(
+        "--force", action="store_true",
+        help="try every channel that has a secret/toast, even if disabled in config",
+    )
+    p.set_defaults(func=cmd_notify_test)
 
     p = sub.add_parser("identity", help="your own accounts, as a three-valued posture register")
     p.set_defaults(func=cmd_identity)
