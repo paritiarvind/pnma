@@ -15,6 +15,7 @@ from ..collectors.portscan import C2_INDICATOR_PORTS, classify_port
 from ..oui import describe as describe_vendor
 from ..oui import is_iot_vendor
 from .. import vulns
+from ..collectors.confirm import confirmed_banners
 from .base import Detection, DetectionContext, Finding, downgrade, upgrade
 from .host_rules import host_rules
 from .identity_rules import identity_rules
@@ -622,6 +623,10 @@ class CVEExposureDetection(Detection):
         for hit in vulns.match_devices(devices):
             d = hit["device"]
             name = d.get("label") or d.get("hostname") or d.get("ip") or d["device_id"]
+            # Banners the active confirmation probe has read for this device, if
+            # it is enabled; empty otherwise. Lets an advisory say "confirmed
+            # listening: <banner>" instead of only "port open".
+            banners = confirmed_banners(ctx.db, d["device_id"])
             for a in hit["advisories"]:
                 kev = ""
                 if a.kev_confirmed:
@@ -630,8 +635,21 @@ class CVEExposureDetection(Detection):
                         "Exploited Vulnerabilities list -- it is confirmed "
                         "exploited in the wild right now, not theoretical."
                     )
+                advisory_ports = [p["port"] for p in d["open_ports"]
+                                  if p["port"] in banners]
+                confirmed = ""
+                if advisory_ports:
+                    lines = "; ".join(
+                        f"{pt}: {banners[pt] or 'listening (no banner)'}"
+                        for pt in advisory_ports
+                    )
+                    confirmed = (
+                        "\n\nCONFIRMED LISTENING: an active banner read reached "
+                        f"this service -- {lines}. The exposure is real, not just "
+                        "an open-port guess."
+                    )
                 description = (
-                    f"{a.summary}\n\n"
+                    f"{a.summary}{confirmed}\n\n"
                     f"WHY THIS MATTERS: {a.impact}\n\n"
                     f"NEXT STEP: {a.remediation}\n\n"
                     f"FOR LEARNING: {a.sandbox_note} This is a lab exercise on a "
@@ -654,6 +672,7 @@ class CVEExposureDetection(Detection):
                             "references": a.references,
                             "kev_confirmed": a.kev_confirmed,
                             "open_ports": [p["port"] for p in d["open_ports"]],
+                            "confirmed_banners": {str(pt): banners[pt] for pt in advisory_ports} or None,
                         },
                         # Share the correlation key of the port-based rules so a
                         # device already flagged by c2_indicator/profile_deviation

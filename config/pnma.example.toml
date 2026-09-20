@@ -99,6 +99,14 @@ top_ports = 100
 # default for the reason above. Turn it on only for hosts you know tolerate it.
 service_detection = false
 
+# Active confirmation of a flagged exposure: a single, non-destructive banner
+# read on a port that already has a CVE advisory, so "port open" becomes "port
+# open, answered <banner>". Still active (milder than the scan itself), so it is
+# off by default and scope-guarded like every probe. It never tests credentials
+# or sends an exploit -- that is a lab exercise (docs/PENTEST_LAB.md).
+confirm_exposures = false
+confirm_interval_s = 1800
+
 [retention]
 # Observations, availability samples and scan logs older than this are pruned.
 # Unbounded growth is a self-inflicted outage; it is also a privacy control,
@@ -154,3 +162,18 @@ outbound_min_severity = "high"
 enabled = false
 cowrie_log_path = ""     # e.g. /home/cowrie/cowrie/var/log/cowrie/cowrie.json
 interval_s = 60
+
+[maillog]
+# Ingest the router's emailed system log so PNMA can see the WAN side, DHCP and
+# admin activity a single host cannot. Set the router (System Tools -> System
+# Log -> Mail Log) to email its log to a mailbox, then point PNMA at that
+# mailbox. Read-only IMAP; the password is a SECRET, use an app password:
+#   pnma secrets set maillog_imap_password
+# Verify parsing against your real emails first:  pnma maillog --dry-run
+enabled = false
+imap_host = ""            # e.g. imap.gmail.com
+imap_port = 993
+imap_user = ""            # the mailbox address
+folder = "INBOX"
+from_filter = ""          # optional: only read mail from the router's sender
+interval_s = 300

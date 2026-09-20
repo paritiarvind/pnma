@@ -46,7 +46,9 @@ import uuid
 from .audit import Auditor, NoiseBudget
 from .collectors.arp_table import ArpTableCollector
 from .collectors.discovery import DiscoveryCollector
+from .collectors.confirm import ConfirmationProbe
 from .collectors.honeypot import HoneypotCollector
+from .collectors.maillog import MailLogCollector
 from .collectors.host_windows import (
     HostCollectorUnavailable,
     HostPostureCollector,
@@ -190,6 +192,27 @@ class Collector:
                 self.sensor_id.replace("net-", "hp-"),
                 config.honeypot.cowrie_log_path,
             )
+
+        # Router mail-log ingestion: reads the router's emailed system log if a
+        # mailbox is configured. Read-only IMAP, so no scope/privilege concern.
+        self.maillog: MailLogCollector | None = None
+        ml = config.maillog
+        if ml.enabled and ml.imap_host and ml.imap_user:
+            pw = secrets.get_secret("maillog_imap_password")
+            if pw:
+                self.maillog = MailLogCollector(
+                    self.db, self.sensor_id.replace("net-", "mail-"),
+                    host=ml.imap_host, user=ml.imap_user, password=pw,
+                    folder=ml.folder, from_filter=ml.from_filter, port=ml.imap_port,
+                )
+            else:
+                log.warning("maillog enabled but no maillog_imap_password secret set")
+
+        # Active confirmation probe: a non-destructive banner read on ports
+        # that already have a CVE advisory. Off unless enabled; scope-guarded.
+        self.confirm: ConfirmationProbe | None = None
+        if config.scan.confirm_exposures:
+            self.confirm = ConfirmationProbe(self.db, self.guard)
 
         # `default_rules()` includes the three host posture rules. They are
         # inert until something populates `host_facts`, so a non-Windows host
@@ -577,6 +600,16 @@ class Collector:
                 self.config.honeypot.interval_s, self.honeypot.run_once, "honeypot"
             )
             log.info("honeypot ingestion enabled: %s", self.config.honeypot.cowrie_log_path)
+        if self.confirm is not None:
+            self._scheduler.every(
+                self.config.scan.confirm_interval_s, self.confirm.run_once, "confirm_exposure"
+            )
+            log.info("active exposure confirmation enabled (non-destructive banner reads)")
+        if self.maillog is not None:
+            self._scheduler.every(
+                self.config.maillog.interval_s, self.maillog.run_once, "maillog"
+            )
+            log.info("router mail-log ingestion enabled: %s", self.config.maillog.imap_host)
         # KEV refresh at boot (once), then daily. Both no-ops unless enabled.
         if self.config.alerting.cve_feed_enabled:
             self._refresh_kev()

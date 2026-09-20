@@ -223,6 +223,14 @@ CREATE TABLE IF NOT EXISTS identity_accounts (
     notes       TEXT,
     created_at  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS exposure_banners (
+    device_id   TEXT NOT NULL,
+    port        INTEGER NOT NULL,
+    banner      TEXT NOT NULL,
+    confirmed_at REAL NOT NULL,
+    PRIMARY KEY (device_id, port)
+);
+
 CREATE TABLE IF NOT EXISTS identity_facts (
     account_id  TEXT NOT NULL REFERENCES identity_accounts(account_id) ON DELETE CASCADE,
     control     TEXT NOT NULL,          -- see pnma.identity.CONTROLS

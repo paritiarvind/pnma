@@ -632,6 +632,46 @@ def cmd_honeypot(args) -> int:
     return 0
 
 
+def cmd_maillog(args) -> int:
+    from .collectors.maillog import MailLogCollector, parse_log_body
+    from .db import Database
+
+    cfg = Config.load(args.config)
+    if args.sample:
+        # Parse a local file of router log lines and print what was recognised.
+        with open(args.sample, encoding="utf-8", errors="replace") as fh:
+            events = parse_log_body(fh.read())
+        print(f"Recognised {len(events)} event(s):")
+        for ev in events:
+            print(f"  [{ev.severity}] {ev.kind}: {ev.title}"
+                  + (f" ({ev.ip})" if ev.ip else ""))
+        return 0
+
+    ml = cfg.maillog
+    if not (ml.imap_host and ml.imap_user):
+        print("Configure [maillog] (imap_host, imap_user) and set the password:\n"
+              "  pnma secrets set maillog_imap_password")
+        return 2
+    from . import secrets as _secrets
+    pw = _secrets.get_secret("maillog_imap_password")
+    if not pw:
+        print("No maillog_imap_password secret set. Run: pnma secrets set maillog_imap_password")
+        return 2
+    db = Database(cfg.database)
+    mc = MailLogCollector(db, "mail-cli", host=ml.imap_host, user=ml.imap_user,
+                          password=pw, folder=ml.folder, from_filter=ml.from_filter,
+                          port=ml.imap_port)
+    r = mc.run_once(dry_run=args.dry_run)
+    db.close()
+    if not r.get("ok"):
+        print(f"Ingest failed: {r.get('reason')}")
+        return 1
+    verb = "would raise" if args.dry_run else "raised"
+    print(f"{r['messages']} message(s), {r['parsed']} event(s) parsed, {verb} "
+          f"{r.get('raised', 0)} alert(s).")
+    return 0
+
+
 def cmd_notify_test(args) -> int:
     """Send a test alert through the enabled outbound channels + local toast."""
     from dataclasses import dataclass
@@ -751,6 +791,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("honeypot", help="ingest a Cowrie honeypot log into alerts")
     p.add_argument("--log", help="path to cowrie.json (overrides config)")
     p.set_defaults(func=cmd_honeypot)
+
+    p = sub.add_parser("maillog", help="ingest the router's emailed system log (IMAP)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="parse and report, but raise no alerts and mark nothing read")
+    p.add_argument("--sample", help="parse a local file of router log lines instead of IMAP")
+    p.set_defaults(func=cmd_maillog)
 
     p = sub.add_parser(
         "notify-test", help="send a test alert through the enabled delivery channels"

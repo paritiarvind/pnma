@@ -365,6 +365,13 @@ class Auditor:
             "and network printers.",
         )
         add(
+            "Confirmation probe stays passive",
+            True,
+            "Active exposure confirmation, when enabled, only reads a service "
+            "banner -- it sends no exploit and no credentials, and is "
+            "scope-guarded. Enabled: " + ("yes" if cfg.scan.confirm_exposures else "no") + ".",
+        )
+        add(
             "Outbound alerting off",
             not (cfg.alerting.webhook_enabled or cfg.alerting.ntfy_enabled),
             "Auto-start + elevation + recon + webhook/push egress is the "

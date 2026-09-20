@@ -83,6 +83,12 @@ class ScanConfig:
     timing: int = 2
     top_ports: int = 100
     service_detection: bool = False
+    # Active confirmation of a flagged exposure: a single non-destructive
+    # banner read on a port that already has a CVE advisory, so "port open"
+    # becomes "port open, answered <banner>". Off by default -- it is still
+    # active, though milder than the scan. Scope-guarded like every probe.
+    confirm_exposures: bool = False
+    confirm_interval_s: int = 1800
 
 
 @dataclass
@@ -129,6 +135,20 @@ class HoneypotConfig:
 
 
 @dataclass
+class MailLogConfig:
+    # Ingest the router's emailed system log (TP-Link "Mail Log" and similar).
+    # Off unless a mailbox is configured. Read-only IMAP; the password is the
+    # secret maillog_imap_password, never set here.
+    enabled: bool = False
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_user: str = ""
+    folder: str = "INBOX"
+    from_filter: str = ""      # only read mail from this sender, if set
+    interval_s: int = 300
+
+
+@dataclass
 class Config:
     network: NetworkConfig
     guard: GuardConfig = field(default_factory=GuardConfig)
@@ -137,6 +157,7 @@ class Config:
     scan: ScanConfig = field(default_factory=ScanConfig)
     alerting: AlertingConfig = field(default_factory=AlertingConfig)
     honeypot: HoneypotConfig = field(default_factory=HoneypotConfig)
+    maillog: MailLogConfig = field(default_factory=MailLogConfig)
     database: str = "data/pnma.db"
     retention_days: int = 30
 
@@ -166,6 +187,7 @@ class Config:
             scan=ScanConfig(**raw.get("scan", {})),
             alerting=AlertingConfig(**raw.get("alerting", {})),
             honeypot=HoneypotConfig(**raw.get("honeypot", {})),
+            maillog=MailLogConfig(**raw.get("maillog", {})),
             database=raw.get("database", "data/pnma.db"),
             retention_days=raw.get("retention", {}).get("days", 30),
         )
