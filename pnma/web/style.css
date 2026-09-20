@@ -19,8 +19,13 @@
    * view that sits open on a second screen for hours. */
   --bg:            #0e1116;
   --bg-sunken:     #0a0d11;
-  --bg-raised:     #161b22;
-  --bg-inset:      #1c232c;
+  /* One step lighter than the original #161b22/#1c232c pair, with a touch
+   * more blue in the mix rather than flat neutral grey -- part of the same
+   * "airier, not a dense grey wall" brief as the radius and spacing bumps
+   * below. Still comfortably inside a dark theme; this is a few percent of
+   * lightness, not a light-mode surface. */
+  --bg-raised:     #171e29;
+  --bg-inset:      #202938;
 
   --fg:            #e6edf3;
   --fg-muted:      #9aa7b4;
@@ -31,12 +36,39 @@
 
   --accent:        #58a6ff;
 
+  /* Decorative wayfinding colour for the six nav rows only -- never used for
+   * a check's outcome or a severity. This is the "categorical, not state"
+   * vocabulary style.css's own token comment already carves out for series
+   * identity (see the CAT array in viz.js for the device-class/activity-kind
+   * version of the same idea); every hue below is picked to sit away from
+   * the four reserved bands (finding-red ~4°, warn-amber ~40°, ok-green
+   * ~140°, unknown-violet ~262°) so a colourful sidebar never gets mistaken
+   * for a fifth state. Icon shape and the label text still carry the actual
+   * meaning -- colour here is pure wayfinding, same as a highlighter. */
+  --nav-overview:  #3987e5;
+  --nav-network:   #22b8cf;
+  --nav-host:      #e0793c;
+  --nav-alerts:    #ec4899;
+  --nav-identity:  #c98500;
+  --nav-agent:     #7c88ff;
+
   /* State palette. These three are load-bearing: they are the only encoding of
    * a check's outcome, and they must stay mutually distinguishable. Never
    * reuse --ok for anything that is not a passing check. */
-  --ok:            #3fb950;
-  --ok-bg:         rgba(63, 185, 80, 0.10);
-  --ok-line:       rgba(63, 185, 80, 0.45);
+  /* Re-tuned from the original #3fb950. Run through the dataviz skill's
+   * colorblind validator against --finding below: the original pair scored
+   * ΔE 2.2 under deuteranopia (red-green colorblindness, the most common
+   * form, ~4.5% of men) -- on a page whose central conceit is telling ok
+   * apart from finding, that pair was very close to invisible to those
+   * readers wherever the two show up as color alone (the posture rings'
+   * arcs, mainly -- the state chip and tally always pair the hue with a
+   * glyph and word, which is why this shipped without anyone noticing).
+   * This value clears the CVD floor (ΔE 8.6) while staying inside the
+   * dark-mode lightness band the validator also flagged the original for
+   * sitting above (0.695 vs a 0.48-0.67 band). */
+  --ok:            #0f9d58;
+  --ok-bg:         rgba(15, 157, 88, 0.10);
+  --ok-line:       rgba(15, 157, 88, 0.45);
 
   --finding:       #f85149;
   --finding-bg:    rgba(248, 81, 73, 0.10);
@@ -71,20 +103,61 @@
   --sev-medium:      #d29922;
   --sev-low:         #8b949e;
 
-  /* Spacing scale. Four steps is enough; more invites arbitrary values. */
+  /* Spacing scale. Four steps is enough; more invites arbitrary values.
+   * s2 through s5 are each up one notch from the original (8/16/24/40) --
+   * the concrete form of "more whitespace" in the airier-card brief. s1 is
+   * left alone: it only ever separates a glyph from its label, and more air
+   * there just looks like a gap. */
   --s1: 4px;
-  --s2: 8px;
-  --s3: 16px;
-  --s4: 24px;
-  --s5: 40px;
+  --s2: 10px;
+  --s3: 20px;
+  --s4: 30px;
+  --s5: 48px;
 
-  --radius:     6px;
-  --radius-sm:  4px;
+  /* Corner radius, up from 6/4px. A bigger radius is the single cheapest
+   * lever for "generic dense dashboard" versus "airier" -- same reasoning as
+   * the spacing bump above, applied to shape instead of gaps. */
+  --radius:     12px;
+  --radius-sm:  7px;
+  --sidebar-w:  244px;
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
           sans-serif;
   /* System monospace only. A webfont would need a fourth route. */
   --mono: "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+
+  /* Elevation. Two layers, not one: a tight contact shadow for definition at
+   * the edge plus a softer, wider ambient shadow for actual depth -- the
+   * same split every real elevation system uses (Material's is the most
+   * literally documented version of it) rather than one shadow trying to do
+   * both jobs and looking like a smudge either way. Still faint: this is a
+   * dense page meant to sit open for hours, not a card that needs to look
+   * like it's floating off the screen. */
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px -6px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --shadow-sheet:  0 -12px 32px rgba(0, 0, 0, 0.5);
+  /* A soft colour-matched glow around whatever's focused, on top of the hard
+   * outline rather than instead of it -- the outline is what WCAG actually
+   * requires, the glow is what makes it read as "lit up" rather than "a box
+   * appeared". */
+  --shadow-focus:  0 0 0 4px rgba(88, 166, 255, 0.16);
+
+  /* Type scale. This dashboard is written to "sit open on a second screen for
+   * hours" (see the surfaces comment above) and to be read at a glance, not
+   * proofread -- the numbers that carry the actual verdict (ring scores, tile
+   * values) need to win the page, not sit at the same weight as their
+   * captions. Two sizes per role: the base for phone, a step up for anything
+   * wide enough to be a monitor rather than a hand. */
+  --fs-number:      30px;
+  --fs-number-lg:   36px;
+  --fs-tile:        24px;
+  --fs-tile-lg:     28px;
+}
+
+@media (min-width: 900px) {
+  :root {
+    --fs-number: var(--fs-number-lg);
+    --fs-tile:   var(--fs-tile-lg);
+  }
 }
 
 /* ------------------------------------------------------------------- reset */
@@ -95,15 +168,44 @@
   box-sizing: border-box;
 }
 
+/* The UA's `[hidden] { display: none }` loses to any class that sets its own
+ * display -- `.gap` and `.alertrow` are grids -- so a filtered-out row was
+ * still drawn. One rule, above every component, settles it. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   overflow-x: hidden;
-  background: var(--bg);
   color: var(--fg);
   font-family: var(--font);
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  /* The one purely atmospheric touch on the page: a very faint accent-tinted
+   * glow anchored above the masthead, fading out well before halfway down
+   * the viewport, over the flat --bg everywhere else. This is the same
+   * technique Linear/Vercel-style dark UIs use for depth instead of an
+   * image or a second stylesheet -- it's two numbers in a CSS gradient, so
+   * it costs nothing against the "no build step, no dependencies, works
+   * with no route to the internet" constraint the rest of this file holds
+   * to. Kept at 5% opacity deliberately: this is a security tool someone
+   * reads for hours, not a marketing page, so the glow should be felt
+   * rather than seen. */
+  /* Two faint washes rather than one -- blue upper-left, indigo upper-right
+   * -- so the "one accent colour on a grey wall" look the colourful-accents
+   * brief is pushing back on doesn't just move from the cards to the page
+   * background. Same 5%-ish opacity ceiling as before: felt, not seen. */
+  background:
+    radial-gradient(1000px 480px at 12% -10%, rgba(57, 135, 229, 0.06), transparent 60%),
+    radial-gradient(1000px 480px at 88% -6%, rgba(124, 136, 255, 0.045), transparent 60%),
+    var(--bg);
+  /* Not background-attachment: fixed -- iOS Safari's handling of a fixed
+   * background is notoriously unreliable (it can repaint on every scroll
+   * frame, or just silently fall back to scroll), and the README is
+   * explicit about this dashboard being installed to an iOS home screen.
+   * Scrolling with the page means the glow sits near the actual top of the
+   * document instead of pinned to the viewport, which is the right place
+   * for it anyway. */
 }
 
 h1, h2, h3 {
@@ -125,22 +227,6 @@ code, .mono {
   padding: 0 var(--s3) var(--s5);
 }
 
-.masthead {
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-sunken);
-  margin-bottom: var(--s4);
-}
-
-.masthead__inner {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: var(--s3);
-  display: flex;
-  align-items: baseline;
-  gap: var(--s3);
-  flex-wrap: wrap;
-}
-
 .masthead__title {
   font-size: 16px;
   letter-spacing: 0.02em;
@@ -149,6 +235,103 @@ code, .mono {
 .masthead__sub {
   color: var(--fg-dim);
   font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- shell */
+
+/* `.shell` / `.sidebar` / `.shell__main` replace the old horizontal
+ * `<header class="masthead">` + top `<nav class="tabs">` pair. Below 900px
+ * (the same "wide enough to be a monitor" line the type scale uses) this is
+ * still a horizontal bar: brand+tools on one row, tabs wrapping to a second
+ * -- functionally the old masthead, just built from the new markup instead
+ * of a header element, so a phone or tablet visitor sees no change from the
+ * previous layout other than the airier tokens above. Only at monitor width
+ * does `.sidebar` become a real left rail; a sidebar has nowhere to go on a
+ * hand-held screen. The phone-only fixed bottom tab bar further down this
+ * file is untouched either way -- `.tabs` pulls itself out of `.sidebar`'s
+ * flow with `position: fixed` there regardless of what contains it. */
+.shell {
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-sunken);
+}
+
+.sidebar__brand {
+  order: 1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.sidebar .tabs {
+  order: 3;
+  flex-basis: 100%;
+}
+
+.sidebar .masthead__tools {
+  order: 2;
+  margin-left: auto;
+}
+
+@media (min-width: 900px) {
+  .shell {
+    display: flex;
+    align-items: stretch;
+  }
+  .sidebar {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    width: var(--sidebar-w);
+    flex: none;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+    border-bottom: none;
+    border-right: 1px solid var(--line);
+    padding: var(--s4) var(--s2) var(--s3);
+  }
+  .sidebar__brand {
+    order: initial;
+    display: block;
+    padding: 0 var(--s2) var(--s4);
+  }
+  .sidebar__brand .masthead__sub {
+    display: block;
+    margin-top: 2px;
+  }
+  .sidebar .tabs {
+    order: initial;
+    flex-basis: auto;
+  }
+  .sidebar .masthead__tools {
+    order: initial;
+    margin-left: 0;
+    margin-top: auto;
+    padding-top: var(--s3);
+    flex-wrap: wrap;
+  }
+  .shell__main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .page {
+    margin: 0;
+    max-width: none;
+    padding: var(--s4) var(--s5);
+  }
 }
 
 .section {
@@ -181,6 +364,22 @@ code, .mono {
   background: var(--bg-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+}
+
+/* Keyboard focus. Nothing in this file styled :focus before this rule, which
+ * meant the tab bar, alert actions, gap list and identity buttons relied on
+ * whatever the browser's default outline happened to render on a dark
+ * background -- often nothing visible at all. One ring, one colour, applied
+ * to every interactive element on the page. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-focus);
 }
 
 .badge {
@@ -288,11 +487,21 @@ code, .mono {
   border-left-width: 3px;
   border-radius: var(--radius);
   background: var(--bg-raised);
+  box-shadow: var(--shadow-raised);
 }
 
+/* Weight 700 + tightened tracking, not the 600/normal every other label on
+ * the page uses. Linear's own writeup of their redesign singles out exactly
+ * this move -- pushing headline numerals to a weight extreme rather than a
+ * half-step -- as what makes a hero number read as the answer instead of
+ * just another label. Tightening the tracking on top of that is the same
+ * trick a ticker display uses to keep a run of digits looking like one
+ * unit; it works on a monospace face too; the fixed advance width doesn't
+ * stop letter-spacing from pulling the gaps between glyphs in. */
 .stat__n {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: var(--fs-tile);
+  font-weight: 700;
+  letter-spacing: -0.02em;
   font-family: var(--mono);
   line-height: 1.2;
 }
@@ -375,6 +584,7 @@ code, .mono {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-raised);
+  box-shadow: var(--shadow-raised);
   overflow: hidden;
 }
 
@@ -454,10 +664,17 @@ code, .mono {
   padding: var(--s3);
   border-top: 1px solid var(--line);
   border-left: 3px solid transparent;
+  transition: background-color 120ms ease;
 }
 
 .fact:first-child {
   border-top: none;
+}
+
+/* background-color, not background: `.fact--unknown` paints its hatch with
+ * `background-image`, and the shorthand would silently clear it on hover. */
+.fact:hover {
+  background-color: var(--bg-inset);
 }
 
 .fact--ok      { border-left-color: var(--ok); }
@@ -598,6 +815,27 @@ code, .mono {
   max-width: 78ch;
 }
 
+/* The static "Loading…" placeholders in index.html, before the first fetch
+ * resolves. A solid dashed box reads as an empty state; on first load it
+ * isn't one -- data is coming -- so it gets a slow shimmer instead of sitting
+ * static and ambiguous for however long the first round-trip takes. */
+.placeholder--loading {
+  border-style: solid;
+  color: transparent;
+  min-height: 96px;
+  background:
+    linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.05) 50%, transparent 70%) var(--bg-raised);
+  background-size: 200% 100%;
+  animation: pnma-shimmer 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .placeholder--loading { animation: none; }
+}
+@keyframes pnma-shimmer {
+  from { background-position: 150% 0; }
+  to   { background-position: -50% 0; }
+}
+
 .placeholder__title {
   color: var(--fg);
   font-weight: 600;
@@ -622,7 +860,7 @@ code, .mono {
 /* ------------------------------------------------------------ responsive */
 
 @media (max-width: 640px) {
-  .masthead__inner,
+  .sidebar,
   .page {
     padding-left: var(--s2);
     padding-right: var(--s2);
@@ -683,6 +921,7 @@ code, .mono {
   border-radius: var(--radius);
   padding: var(--s3);
   margin-bottom: var(--s2);
+  box-shadow: var(--shadow-raised);
 }
 .alert--critical { border-left-color: var(--sev-critical); }
 .alert--high     { border-left-color: var(--sev-high); }
@@ -754,9 +993,19 @@ code, .mono {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease, transform 80ms ease;
 }
 .btn:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
+/* A real press, not just a colour swap -- the one-pixel dip is what makes a
+ * button feel like it registered the click before the network round-trip
+ * (acknowledge/resolve/attest are the only writes this dashboard makes, and
+ * this is the whole gap between "polished" and "did that work?"). */
+.btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .btn { transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease; }
+  .btn:active:not(:disabled) { transform: none; }
+}
 
 /* =================================================================== devices */
 
@@ -771,7 +1020,10 @@ code, .mono {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   margin-bottom: var(--s2);
+  box-shadow: var(--shadow-raised);
+  transition: border-color 120ms ease;
 }
+.dev:hover { border-color: var(--line-strong); }
 /* An untrusted device that is currently online is the one row worth finding in
  * a list of twelve. Offline-and-untrusted is history, not a live question. */
 .dev--attention { border-color: var(--finding-line); background: var(--finding-bg); }
@@ -839,6 +1091,7 @@ code, .mono {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: var(--s3);
+  box-shadow: var(--shadow-raised);
 }
 
 /* A div strip rather than an SVG chart. `el()` builds elements with
@@ -910,8 +1163,6 @@ code, .mono {
  * and bars carry the same three states and the same severity scale as the
  * cards, or they would be a second vocabulary. */
 
-.masthead__inner { align-items: center; justify-content: space-between; }
-.masthead__brand { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
 .masthead__tools { display: flex; gap: var(--s2); align-items: center; }
 
 .tool {
@@ -927,16 +1178,64 @@ code, .mono {
 .tabs {
   max-width: 1100px; margin: 0 auto; padding: 0 var(--s3);
   display: flex; gap: var(--s1); overflow-x: auto; scrollbar-width: none;
+  position: relative;
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs__tab {
   font: inherit; font-size: 13px; color: var(--fg-muted); background: none; border: 0;
   border-bottom: 2px solid transparent; padding: var(--s2) var(--s3); cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; position: relative;
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; position: relative;
+  transition: color 120ms ease, background-color 120ms ease;
 }
-.tabs__tab:hover { color: var(--fg); }
-.tabs__tab.is-active { color: var(--fg); border-bottom-color: var(--accent); }
-.tabs__glyph { font-size: 14px; opacity: 0.8; }
+.tabs__tab:hover { color: var(--fg); background: var(--bg-raised); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+/* The border-bottom-color on .is-active is kept as a static fallback (and as
+ * the whole mechanism on the phone bar, styled separately below) -- the
+ * moving version is `.tabs__indicator`, a real element positioned in JS,
+ * because there's no selector for "as wide as whichever button is active"
+ * in a variable-width flex row. */
+.tabs__tab.is-active { color: var(--fg); border-bottom-color: var(--nav-color, var(--accent)); background: var(--bg-raised); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+
+.tabs__indicator {
+  position: absolute; left: 0; bottom: -1px; height: 2px; width: 0;
+  background: var(--accent); border-radius: 2px;
+  transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), width 220ms cubic-bezier(0.4, 0, 0.2, 1), background-color 160ms ease;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabs__indicator { transition: none; }
+}
+
+/* Each of the six tabs claims one of the wayfinding hues declared in the
+ * token block -- see the comment there for why these particular colours and
+ * why this is safe next to the load-bearing state palette. Scoped to the
+ * `data-tab` attribute app.js/viz.js already put on the button for other
+ * reasons, so no extra markup or JS bookkeeping is needed just for colour. */
+.tabs__tab[data-tab="overview"] { --nav-color: var(--nav-overview); }
+.tabs__tab[data-tab="network"]  { --nav-color: var(--nav-network); }
+.tabs__tab[data-tab="host"]     { --nav-color: var(--nav-host); }
+.tabs__tab[data-tab="alerts"]   { --nav-color: var(--nav-alerts); }
+.tabs__tab[data-tab="identity"] { --nav-color: var(--nav-identity); }
+.tabs__tab[data-tab="agent"]    { --nav-color: var(--nav-agent); }
+
+/* The icon is muted until its tab is hovered or active -- a rail of six
+ * fully-saturated icons all the time is closer to a colour swatch than a
+ * navigation aid; dimming the five you are not on is what makes the coloured
+ * one you land on actually read as "here". */
+.tabs__glyph { display: inline-flex; }
+.tabs__icon {
+  width: 18px; height: 18px; flex: none;
+  color: var(--nav-color, var(--fg-muted));
+  opacity: 0.55;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.tabs__tab:hover .tabs__icon,
+.tabs__tab.is-active .tabs__icon { opacity: 1; }
+.tabs__tab.is-active .tabs__icon { transform: scale(1.06); }
+@media (prefers-reduced-motion: reduce) {
+  .tabs__icon { transition: none; }
+  .tabs__tab.is-active .tabs__icon { transform: none; }
+}
+
 .tabs__badge {
   font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 999px;
   background: var(--bg-inset); color: var(--fg-muted); font-family: var(--mono);
@@ -945,8 +1244,74 @@ code, .mono {
 .tabs__badge--warn { background: rgba(210, 153, 34, 0.15); color: var(--warn); }
 .tabs__badge--unknown { background: var(--unknown-bg); color: var(--unknown); }
 
+/* ---- sidebar nav, monitor width only ------------------------------------ */
+
+@media (min-width: 900px) {
+  .tabs {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    overflow-x: visible;
+    overflow-y: visible;
+    padding: 0;
+    max-width: none;
+    margin: 0;
+  }
+  .tabs__tab {
+    justify-content: flex-start;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border-bottom: none;
+    border-left: 3px solid transparent;
+    width: 100%;
+  }
+  .tabs__tab:hover { border-radius: var(--radius-sm); }
+  .tabs__tab.is-active {
+    border-bottom-color: transparent;
+    border-left-color: var(--nav-color, var(--accent));
+    border-radius: var(--radius-sm);
+  }
+  .tabs__label { flex: 1 1 auto; text-align: left; }
+  .tabs__badge { margin-left: auto; }
+  /* Same element, repointed: a left rail instead of an underline, coloured
+   * per-tab in JS (viz.js reads `--nav-color` back off the button so this
+   * file stays the one place the six hues are defined). */
+  .tabs__indicator {
+    left: 0; right: auto; top: 0; bottom: auto;
+    width: 3px; height: 0;
+    border-radius: 0 2px 2px 0;
+  }
+}
+
 section[data-tab] { display: none; }
-section[data-tab].is-active { display: block; }
+section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes pnma-panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Content entrance. Fires whenever one of these is actually created --
+ * first load, or a poll whose payload changed (see viz.js's `unchanged()`
+ * and app.js's `loadPanel`, both of which now skip the rebuild otherwise).
+ * Before those guards existed everywhere, this same animation would have
+ * replayed on every unmodified 60-120s tick across the whole page; it's
+ * only safe to add now that a mount really does mean "this is new or
+ * changed" rather than "a timer fired". */
+@keyframes pnma-rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fact, .alert, .dev, .cat-group, .idacc, .check, .rule, .tile, .stat, .ringcard {
+  animation: pnma-rise-in 220ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  section[data-tab].is-active,
+  .fact, .alert, .dev, .cat-group, .idacc, .check, .rule, .tile, .stat, .ringcard {
+    animation: none;
+  }
+}
 
 /* Phone: the tab bar becomes a bottom bar with icons above labels, and the
  * page gets bottom padding so the last card is never under it. */
@@ -957,8 +1322,11 @@ section[data-tab].is-active { display: block; }
     padding: 0 0 env(safe-area-inset-bottom); justify-content: space-around; gap: 0;
   }
   .tabs__tab { flex-direction: column; gap: 2px; padding: 8px 4px 6px; font-size: 10px; flex: 1; border-bottom: 0; border-top: 2px solid transparent; }
-  .tabs__tab.is-active { border-top-color: var(--accent); }
-  .tabs__glyph { font-size: 18px; }
+  .tabs__tab.is-active { border-top-color: var(--nav-color, var(--accent)); }
+  /* The sliding underline is a desktop-tab-bar affordance; the phone bar
+   * already marks the active tab with its own top border per icon. */
+  .tabs__indicator { display: none; }
+  .tabs__icon { width: 20px; height: 20px; }
   .tabs__badge { position: absolute; top: 4px; right: 8px; }
   .page { padding-bottom: 96px; }
   .masthead__sub { display: none; }
@@ -971,11 +1339,17 @@ section[data-tab].is-active { display: block; }
 .ringcard {
   background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius);
   padding: var(--s3); display: flex; flex-direction: column; align-items: center; gap: var(--s1);
+  box-shadow: var(--shadow-raised);
 }
+/* Sized via width/height only, never font-size or stroke-width: the SVG's
+ * own viewBox scaling already grows the score, the track and the arcs
+ * together in proportion. Overriding font-size here on top of that would
+ * scale the number twice and throw it out of proportion with its own ring. */
 .ring { width: 132px; height: 132px; }
+@media (min-width: 900px) { .ring { width: 152px; height: 152px; } }
 .ring__track { fill: none; stroke: var(--bg-inset); stroke-width: 9; }
 .ring__arc { fill: none; stroke-width: 9; transition: stroke-dasharray 400ms ease; }
-.ring__score { fill: var(--fg); font-size: 30px; font-weight: 600; font-family: var(--mono); }
+.ring__score { fill: var(--fg); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; font-family: var(--mono); }
 .ring__of { fill: var(--fg-dim); font-size: 10px; }
 .ringcard__label { font-weight: 600; }
 .ringcard__sub { color: var(--fg-dim); font-size: 12px; text-align: center; }
@@ -989,12 +1363,12 @@ section[data-tab].is-active { display: block; }
 .tiles--compact { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 .tile {
   background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: var(--s2) var(--s3); border-left-width: 3px;
+  padding: var(--s2) var(--s3); border-left-width: 3px; box-shadow: var(--shadow-raised);
 }
 .tile--warn { border-left-color: var(--warn); }
 .tile--bad { border-left-color: var(--finding); }
 .tile--unknown { border-left-color: var(--unknown); }
-.tile__value { font-size: 24px; font-weight: 600; font-family: var(--mono); line-height: 1.2; }
+.tile__value { font-size: var(--fs-tile); font-weight: 700; letter-spacing: -0.02em; font-family: var(--mono); line-height: 1.2; }
 .tile__label { color: var(--fg-muted); font-size: 12px; }
 .tile__foot { color: var(--fg-dim); font-size: 11px; margin-top: 4px; }
 
@@ -1003,12 +1377,13 @@ section[data-tab].is-active { display: block; }
 .sevbar__keys { display: flex; gap: var(--s2); flex-wrap: wrap; font-size: 11px; color: var(--fg-muted); margin-top: 4px; }
 .sevbar__keys span { display: inline-flex; align-items: center; gap: 4px; }
 
-.gaps { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3); }
+.gaps { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3); box-shadow: var(--shadow-raised); }
 .gaps__title { font-size: 14px; margin-bottom: var(--s2); }
 .gaps__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s1); }
 .gap {
   display: grid; grid-template-columns: auto 1fr; gap: 2px var(--s2); align-items: center;
   padding: 6px var(--s2); border-radius: var(--radius-sm); cursor: pointer; border-left: 3px solid transparent;
+  transition: background-color 120ms ease;
 }
 .gap:hover { background: var(--bg-inset); }
 .gap--finding { border-left-color: var(--finding); }
@@ -1018,13 +1393,22 @@ section[data-tab].is-active { display: block; }
 
 /* ---- network map ---------------------------------------------------------- */
 
-.netmap { width: 100%; height: auto; max-height: 520px; display: block; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); }
+.netmap { width: 100%; height: auto; max-height: 560px; display: block; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-raised); }
 .netmap__orbit { fill: none; stroke: var(--line); stroke-width: 1; }
 .netmap__edge { stroke: var(--line-strong); stroke-width: 1.5; }
 .netmap__edge--dim { stroke: var(--line); stroke-dasharray: 3 4; }
-.netnode { cursor: pointer; outline: none; }
-.netnode__halo { fill: transparent; }
+.netnode {
+  cursor: pointer; outline: none;
+  transition: transform 150ms ease;
+  transform-box: fill-box; transform-origin: center;
+}
+.netnode:hover, .netnode:focus-visible { transform: scale(1.06); }
+.netnode__halo { fill: transparent; transition: fill 150ms ease; }
 .netnode:hover .netnode__halo, .netnode:focus .netnode__halo { fill: rgba(88, 166, 255, 0.12); }
+@media (prefers-reduced-motion: reduce) {
+  .netnode { transition: none; }
+  .netnode:hover, .netnode:focus-visible { transform: none; }
+}
 .netnode__halo--alert { stroke: var(--sev-high); stroke-width: 1; stroke-dasharray: 2 3; }
 .netnode__body { fill: var(--bg-inset); stroke-width: 3; }
 .netnode--offline .netnode__body { fill: var(--bg-sunken); stroke-dasharray: 4 3; }
@@ -1039,12 +1423,23 @@ section[data-tab].is-active { display: block; }
 
 /* ---- device sheet (tap on a node) ------------------------------------------ */
 
-.sheet { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.6); display: flex; align-items: flex-end; justify-content: center; }
+.sheet {
+  position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.6); display: flex;
+  align-items: flex-end; justify-content: center;
+  opacity: 0; transition: opacity 180ms ease;
+}
 .sheet[hidden] { display: none; }
+.sheet.is-open { opacity: 1; }
 .sheet__card {
   width: 100%; max-width: 640px; max-height: 88vh; overflow: auto;
   background: var(--bg-raised); border: 1px solid var(--line-strong); border-radius: var(--radius) var(--radius) 0 0;
   padding: var(--s3); padding-bottom: calc(var(--s3) + env(safe-area-inset-bottom));
+  box-shadow: var(--shadow-sheet);
+  transform: translateY(24px); transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.sheet.is-open .sheet__card { transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet__card { transition: none; }
 }
 @media (min-width: 641px) { .sheet { align-items: center; } .sheet__card { border-radius: var(--radius); } }
 .sheet__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--s2); }
@@ -1102,7 +1497,7 @@ section[data-tab].is-active { display: block; }
 
 .idsummary { display: grid; grid-template-columns: auto 1fr; gap: var(--s3); align-items: center; margin-bottom: var(--s3); }
 @media (max-width: 640px) { .idsummary { grid-template-columns: 1fr; } }
-.idacc { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: var(--s3); overflow: hidden; }
+.idacc { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: var(--s3); overflow: hidden; box-shadow: var(--shadow-raised); }
 .idacc__head { display: flex; gap: var(--s2); align-items: center; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .idacc__glyph { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-inset); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
 .idacc__label { font-weight: 600; }
@@ -1132,23 +1527,171 @@ section[data-tab].is-active { display: block; }
 .agent__auth--ok { border-left-color: var(--ok); background: var(--ok-bg); }
 .agent__auth--no { border-left-color: var(--finding); background: var(--finding-bg); }
 .checks { display: grid; gap: var(--s1); }
-.check { display: grid; grid-template-columns: auto 1fr; gap: var(--s2); align-items: start; padding: var(--s2) var(--s3); background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.check { display: grid; grid-template-columns: auto 1fr; gap: var(--s2); align-items: start; padding: var(--s2) var(--s3); background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-raised); }
 .check__title { font-size: 13px; }
 .check__detail { color: var(--fg-dim); font-size: 11px; }
 .rules { display: grid; gap: var(--s1); }
-.rule { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--s2) var(--s3); }
+.rule { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--s2) var(--s3); box-shadow: var(--shadow-raised); transition: border-color 120ms ease; }
+/* Border brightens one step on hover, same progression Vercel's Geist system
+ * documents for interactive borders (default -> hover -> active getting
+ * successively lighter): a signal that this box is the thing to click, on
+ * an element whose only visible affordance otherwise is the cursor. */
+.rule:has(summary:hover) { border-color: var(--line-strong); }
 .rule summary { cursor: pointer; display: flex; align-items: center; gap: var(--s2); font-size: 13px; }
 .rule__mitre { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
 .rule__blind { color: var(--fg-muted); font-size: 12px; margin: var(--s2) 0 0; }
 
 /* ---- token gate ---------------------------------------------------------------- */
 
-.gate { position: fixed; inset: 0; z-index: 40; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: var(--s3); }
+.gate {
+  position: fixed; inset: 0; z-index: 40; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: var(--s3);
+  opacity: 0; transition: opacity 180ms ease;
+}
 .gate[hidden] { display: none; }
-.gate__card { width: 100%; max-width: 360px; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); display: grid; gap: var(--s2); }
+.gate.is-open { opacity: 1; }
+.gate__card {
+  width: 100%; max-width: 360px; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); display: grid; gap: var(--s2); box-shadow: var(--shadow-sheet);
+  transform: scale(0.98); transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.gate.is-open .gate__card { transform: scale(1); }
+@media (prefers-reduced-motion: reduce) {
+  .gate, .gate__card { transition: none; }
+}
 .gate__card p { color: var(--fg-muted); font-size: 12px; margin: 0; }
 .gate__input { font: inherit; padding: 8px 10px; background: var(--bg-inset); color: var(--fg); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
 
 .empty { padding: var(--s3); background: var(--bg-raised); border: 1px dashed var(--line-strong); border-radius: var(--radius); }
 .empty pre { font-family: var(--mono); font-size: 12px; color: var(--fg-muted); white-space: pre-wrap; }
 .error { padding: var(--s3); background: var(--finding-bg); border: 1px solid var(--finding-line); border-radius: var(--radius); }
+
+/* ---- links out of the overview ------------------------------------------ */
+
+/* Ring cards and tiles are buttons when they lead somewhere. Same face as
+ * the static version -- the affordance is the hover lift and the cursor,
+ * not a different colour, so the overview does not turn into a wall of
+ * things that look pressable. */
+button.ringcard, button.tile {
+  font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+button.ringcard { text-align: center; }
+button.ringcard:hover, button.tile:hover { transform: translateY(-1px); border-color: var(--line-strong); }
+button.ringcard:focus-visible, button.tile:focus-visible, .alertrow:focus-visible, .triage__chip:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.gaps__more { margin-top: var(--s2); }
+
+/* A row a gap or a notification jumped to: flashes once, then settles. */
+@keyframes pnma-target {
+  0%   { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.0); background-color: rgba(88, 166, 255, 0.18); }
+  100% { box-shadow: 0 0 0 4px rgba(88, 166, 255, 0.0); background-color: transparent; }
+}
+.is-target { animation: pnma-target 1600ms ease-out; }
+.idctl__row.is-target, .fact.is-target, .dev.is-target, .alertrow.is-target { border-radius: var(--radius-sm); }
+@media (prefers-reduced-motion: reduce) { .is-target { animation: none; outline: 2px solid var(--accent); } }
+
+/* Phone: three small rings on one row, so the tiles and the gaps list are
+ * one thumb-scroll away instead of three screens down. */
+@media (max-width: 640px) {
+  .rings { grid-template-columns: repeat(3, 1fr); gap: var(--s1); }
+  .ringcard { padding: var(--s2) var(--s1); gap: 2px; }
+  .ring { width: 84px; height: 84px; }
+  .ringcard__label { font-size: 12px; }
+  .ringcard__sub { font-size: 10px; text-align: center; }
+  .ring__legend { display: none; }
+}
+
+.devices__caption { margin: 0 0 var(--s2); color: var(--fg-muted); font-size: 13px; }
+.devices__caption strong { color: var(--fg); font-family: var(--mono); }
+.devices__caption strong.is-finding { color: var(--finding); }
+
+.idsummary__counts { display: flex; gap: var(--s1); align-items: center; flex-wrap: wrap; }
+.idsummary__of { color: var(--fg-dim); font-size: 12px; margin-left: var(--s1); }
+
+/* ---- alerts: triage strip + queue ---------------------------------------- */
+
+.triage { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; margin-bottom: var(--s3); }
+.triage__group { display: flex; gap: var(--s1); flex-wrap: wrap; }
+.triage__chip {
+  font: inherit; display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer;
+  background: var(--bg-raised); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+  color: var(--fg-muted); transition: border-color 120ms ease, background-color 120ms ease;
+}
+.triage__chip:hover { border-color: var(--line-strong); color: var(--fg); }
+.triage__chip.is-on { color: var(--fg); background: var(--bg-inset); border-color: var(--accent); }
+.triage__n { font-family: var(--mono); font-weight: 700; font-size: 15px; }
+.triage__chip--critical .triage__n { color: var(--sev-critical); }
+.triage__chip--high .triage__n { color: var(--sev-high); }
+.triage__chip--medium .triage__n { color: var(--sev-medium); }
+.triage__chip--low .triage__n { color: var(--sev-low); }
+.triage__chip--open .triage__n { color: var(--fg); }
+.triage__chip--acknowledged .triage__n { color: var(--warn); }
+.triage__chip--resolved .triage__n { color: var(--ok); }
+.triage__label { font-size: 12px; }
+.triage__note { color: var(--fg-dim); font-size: 12px; margin-left: auto; }
+
+.alertqueue { display: grid; gap: 6px; }
+.alertrow {
+  font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer;
+  display: grid; grid-template-columns: auto 1fr auto; gap: var(--s2) var(--s3); align-items: center;
+  background: var(--bg-raised); border: 1px solid var(--line); border-left: 3px solid var(--line-strong);
+  border-radius: var(--radius); padding: var(--s2) var(--s3);
+  transition: border-color 120ms ease, transform 120ms ease, background-color 120ms ease;
+  animation: pnma-rise-in 220ms ease-out both;
+}
+.alertrow:hover { border-color: var(--line-strong); background: var(--bg-inset); transform: translateY(-1px); }
+.alertrow--critical { border-left-color: var(--sev-critical); }
+.alertrow--high     { border-left-color: var(--sev-high); }
+.alertrow--medium   { border-left-color: var(--sev-medium); }
+.alertrow--low      { border-left-color: var(--sev-low); }
+.alertrow--acknowledged { opacity: 0.8; }
+.alertrow--resolved { opacity: 0.5; }
+.alertrow--resolved:hover, .alertrow--acknowledged:hover { opacity: 1; }
+.alertrow__main { display: grid; gap: 2px; min-width: 0; }
+.alertrow__title { font-weight: 600; font-size: 14px; color: var(--fg); overflow-wrap: anywhere; }
+.alertrow__meta { display: flex; flex-wrap: wrap; gap: var(--s2); font-size: 11px; color: var(--fg-dim); }
+.alertrow__side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.alertrow__age { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.alertqueue__none { text-align: center; }
+@media (max-width: 640px) {
+  .alertrow { grid-template-columns: auto 1fr; }
+  .alertrow__side { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; }
+  .triage__note { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .alertrow { animation: none; } }
+
+/* ---- alert drawer -------------------------------------------------------- */
+
+.sheet__card--wide { max-width: 860px; }
+.alertdetail__head { min-width: 0; }
+.alertdetail__title { font-size: 17px; margin: var(--s1) 0 4px; overflow-wrap: anywhere; }
+.alertdetail__urgency { margin: 0; color: var(--fg-muted); font-size: 13px; }
+.alertdetail__sec { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--line); }
+.alertdetail__sec > h4 { margin: 0 0 var(--s1); }
+.alertdetail__sec .alert__desc { margin-top: var(--s1); }
+.alertdetail__para + .alertdetail__para { margin-top: var(--s2); }
+.alertdetail__label { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.alertdetail__pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 var(--s3); }
+.alertdetail__sec--why > h4 { color: var(--finding); }
+.alertdetail__sec--benign > h4 { color: var(--ok); }
+.alertdetail__sec--malicious > h4 { color: var(--sev-critical); }
+.alertdetail__sec--steps > h4 { color: var(--accent); }
+.alert__steps { margin: var(--s1) 0 0; padding-left: 22px; color: var(--fg-muted); font-size: 13px; line-height: 1.65; }
+.alert__steps li { padding-left: 4px; margin-bottom: 4px; }
+.alert__steps li::marker { color: var(--accent); font-family: var(--mono); font-weight: 700; }
+.alertdetail__entity { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px dashed var(--line); }
+.alertdetail__entity .dev__ports { margin-top: var(--s2); }
+.kv--evidence dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.alertdetail__folded { margin: 4px 0 0; padding-left: var(--s4); color: var(--fg-muted); font-size: 12px; line-height: 1.7; }
+.alertdetail__help { list-style: none; margin: var(--s2) 0 0; padding: 0; color: var(--fg-dim); font-size: 11px; display: grid; gap: 2px; }
+.alertdetail__help strong { color: var(--fg-muted); font-weight: 600; }
+
+.playbook { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px dashed var(--line); }
+.playbook .alert__steps li { margin-bottom: 6px; }
+.playbook code { background: var(--bg-inset); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--fg); }
+.alertdetail__masked { margin: var(--s1) 0 0; font-size: 12px; color: var(--warn); }
+
+button.matrix__cell { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.matrix__cell--live:hover { border-color: var(--accent); background: var(--bg-inset); transform: translateY(-1px); }
+.matrix__cell--live { transition: transform 120ms ease, border-color 120ms ease, background-color 120ms ease; }
+button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.triage__mitre { font: inherit; cursor: pointer; background: var(--accent-bg, var(--bg-inset)); border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; padding: 4px 12px; font-size: 12px; }
+.triage__mitre:hover { background: var(--bg-inset); }

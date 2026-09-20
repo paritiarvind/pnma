@@ -306,7 +306,8 @@ NODE = shutil.which("node")
 
 MASK_HARNESS = r"""
 globalThis.window = globalThis;
-globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+// The mask is opt-in (off by default since the SOC-style rework); switch it on.
+globalThis.localStorage = { getItem: (k) => k === 'pnma.privacy' ? '1' : null, setItem: () => {} };
 globalThis.location = { hash: '', reload: () => {} };
 globalThis.history = { replaceState: () => {} };
 globalThis.document = { addEventListener: () => {}, getElementById: () => null,
@@ -316,6 +317,7 @@ globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) 
 require(process.argv[2]);
 const m = window.PNMA.mask;
 window.PNMA.learnName('Bastion');
+window.PNMA.learnName('gateway'); // a role word learned as a hostname must not be masked
 const out = {
   mac: m('seen 98:03:8e:00:11:22 on eth3'),
   macdash: m('98-03-8E-00-11-22'),
@@ -324,6 +326,7 @@ const out = {
   email: m('someone@example.com'),
   host: m('host Bastion posture'),
   label: m('Living room TV'),
+  role: m('Gateway fingerprint enforced'),
   json: m(JSON.stringify({ip: '10.0.0.77', mac: 'aa:bb:cc:dd:ee:ff'})),
 };
 console.log(JSON.stringify(out));
@@ -343,6 +346,7 @@ def test_privacy_mask_hides_identifiers(tmp_path):
     assert out["ip"] == "Gateway ·.·.·.1 confirmed"
     assert out["cidr"] == "scope ·.·.·.0/24"
     assert out["email"] == "s···@example.com"
+    assert out["role"] == "Gateway fingerprint enforced"
     assert out["host"] == "host B··· posture"
     assert out["label"] == "Living room TV"
     assert "10.0.0.77" not in out["json"] and "dd:ee:ff" not in out["json"]

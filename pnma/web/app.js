@@ -281,7 +281,7 @@ function factCard(fact) {
     }));
   }
 
-  const card = el('div', { class: 'fact fact--' + state }, [head]);
+  const card = el('div', { class: 'fact fact--' + state, 'data-anchor': 'fact:' + fact.fact_key }, [head]);
 
   const measures = [];
   if (fact.value !== null && fact.value !== undefined && fact.value !== '') {
@@ -641,109 +641,459 @@ function foldedRules(alert) {
   return Array.isArray(folded) ? folded : [];
 }
 
-/**
- * One alert card.
+/* ---- reading a rule's prose ------------------------------------------------
  *
- * `onAction` is invoked with (alertId, action, buttons) and owns the POST and
- * the refresh. Passing it in rather than reaching for a module-level function
- * keeps the card renderable from a fixture with no API behind it.
+ * Every rule writes its description as paragraphs, most of them headed by a
+ * shouted label: WHY THIS MATTERS:, BENIGN EXPLANATION:, MALICIOUS
+ * EXPLANATION:, NEXT STEP:, CORROBORATION: and so on. That is the right
+ * structure for an operator and the wrong presentation for one -- eighteen
+ * of them inline is a wall, and the labels vary rule by rule. The drawer
+ * below reads the labels and files each paragraph under one of five fixed
+ * headings, so every alert answers the same five questions in the same
+ * order: what was seen, why it matters, what would make it harmless, what
+ * would make it an attack, what to do. Nothing is dropped -- a label that
+ * fits no heading is kept under its own name in the "how sure is this"
+ * group -- and nothing is rewritten. The detection code is untouched.
  */
-function alertCard(alert, onAction) {
+const DESC_GROUPS = [
+  { key: 'why',        title: 'Why it matters',            re: /WHY|MATTERS|CONTEXT|COMPROMISE|GATEWAY|RISK|CHANGED|FOOTNOTE/ },
+  { key: 'benign',     title: 'Could be harmless if…', re: /BENIGN|^EXPLANATION$/ },
+  { key: 'malicious',  title: 'Could be an attack if…', re: /MALICIOUS/ },
+  { key: 'steps',      title: 'What to do',                re: /NEXT STEP|WHAT TO DO|ACTION|RESOLUTION/ },
+  { key: 'confidence', title: 'How sure is this',          re: /./ },
+];
+
+/* One plain sentence per severity, so the chip is never the only thing
+ * telling a non-specialist how urgently to act. */
+const SEVERITY_MEANING = {
+  critical: 'Act today. This is either a compromise in progress or the exact setup for one.',
+  high:     'Act this week. Exploitable from your own network by anyone who gets onto it.',
+  medium:   'Worth fixing. Not exploitable on its own, but it is the foothold something else needs.',
+  low:      'Hygiene. Fix when convenient; it lowers the noise around everything above it.',
+};
+
+function parseDescription(text) {
+  // Blank lines either side are stripped; a paragraph's own indentation is
+  // kept, because evidence lists are indented on purpose.
+  const paras = String(text || '').split(/\n[ \t]*\n/).map((s) => s.replace(/^\s*\n|\s+$/g, '')).filter((s) => s.trim());
+  const out = { lead: [], groups: {} };
+  for (const g of DESC_GROUPS) out.groups[g.key] = [];
+  for (const p of paras) {
+    let label = null, body = p;
+    let m = p.match(/^([A-Z][A-Z0-9 ,'\/()-]{2,60}?):\s*([\s\S]*)$/);
+    if (m) { label = m[1].trim(); body = m[2].trim(); }
+    else {
+      // "THIS IS THE DEFAULT GATEWAY. If an attacker..." -- a shouted first
+      // sentence without a colon is a label too.
+      m = p.match(/^((?:[A-Z][A-Z0-9'-]*\s+){2,}[A-Z][A-Z0-9'-]*)\.\s+([\s\S]*)$/);
+      if (m) { label = m[1].trim(); body = m[2].trim(); }
+    }
+    if (!label) {
+      if (Object.values(out.groups).every((g) => !g.length)) out.lead.push(p);
+      else out.groups.confidence.push({ label: null, body: p });
+      continue;
+    }
+    const group = DESC_GROUPS.find((g) => g.re.test(label)) || DESC_GROUPS[DESC_GROUPS.length - 1];
+    out.groups[group.key].push({ label, body });
+  }
+  return out;
+}
+
+/* "isolate this device, then investigate. Do not simply close the port --
+ * ..." reads as a checklist once each sentence gets its own line. */
+function stepsList(body) {
+  const steps = body.split(/(?<=[.!?])\s+(?=[A-Z])/).map((s) => s.trim()).filter(Boolean);
+  if (steps.length < 2) return el('p', { class: 'alert__desc', text: body });
+  return el('ol', { class: 'alert__steps' }, steps.map((s) => el('li', { text: s })));
+}
+
+function deviceLabelFor(deviceId) {
+  const devs = (lastDevicesPayload && JSON.parse(lastDevicesPayload).devices) || [];
+  const d = devs.find((x) => x.device_id === deviceId);
+  return d ? (d.label || d.hostname || d.ip || d.mac || deviceId) : null;
+}
+
+/**
+ * One queue row. Everything a triage pass needs to rank the alert without
+ * opening it: severity, what, where, how old, what state it is in.
+ */
+function alertRow(alert, onOpen) {
   const sev = SEVERITIES[alert.severity] ? alert.severity : 'low';
-
-  const head = el('div', { class: 'alert__head' }, [
+  const folded = foldedRules(alert);
+  const device = alert.device_id ? deviceLabelFor(alert.device_id) : null;
+  const row = el('button', {
+    class: 'alertrow alertrow--' + sev + (alert.status !== 'open' ? ' alertrow--' + alert.status : ''),
+    type: 'button', 'data-anchor': 'alert:' + alert.id, 'data-status': alert.status, 'data-severity': sev, 'data-mitre': alert.mitre_id || '',
+  }, [
     severityChip(sev, alert.severity_raw),
-    el('span', { class: 'alert__title', text: alert.title || alert.rule_id }),
+    el('span', { class: 'alertrow__main' }, [
+      el('span', { class: 'alertrow__title', text: alert.title || alert.rule_id }),
+      el('span', { class: 'alertrow__meta' }, [
+        device ? el('span', { text: device }) : null,
+        el('span', { text: (alert.rule_id || '').replace(/_/g, ' ') }),
+        folded.length ? el('span', { text: '+' + folded.length + ' ' + plural(folded.length, 'rule') }) : null,
+        alert.count > 1 ? el('span', { text: 'seen x' + alert.count }) : null,
+      ]),
+    ]),
+    el('span', { class: 'alertrow__side' }, [
+      alert.status !== 'open' ? el('span', { class: 'badge', text: alert.status }) : null,
+      el('span', { class: 'alertrow__age', text: alert.last_seen ? relativeTime(alert.last_seen) : '' }),
+    ]),
   ]);
+  row.addEventListener('click', () => onOpen(alert));
+  return row;
+}
 
-  // A repeat count is a different fact from a single occurrence: it says the
-  // condition kept being true across runs, not that it was seen once and aged.
-  if (alert.count > 1) {
-    head.appendChild(el('span', {
-      class: 'badge',
-      title: 'Seen on ' + alert.count + ' collection runs',
-      text: 'x' + alert.count,
-    }));
+/* Every top-level scalar or list in the evidence, as a key/value grid --
+ * the IPs, MACs, ports, vendors and counts an investigator wants to copy
+ * out without reading JSON. Nested objects stay in the raw disclosure. */
+function evidenceGrid(ev) {
+  if (!ev || typeof ev !== 'object') return null;
+  const rows = [];
+  for (const [k, v] of Object.entries(ev)) {
+    if (k === 'corroborating_rules') continue;
+    let text;
+    if (v === null || v === undefined) text = '\u2014';
+    else if (Array.isArray(v)) { if (!v.length || v.some((x) => x && typeof x === 'object')) continue; text = v.join(', '); }
+    else if (typeof v === 'object') {
+      const flat = Object.entries(v);
+      if (!flat.length || flat.some(([, x]) => x && typeof x === 'object')) continue;
+      text = flat.map(([a, b]) => a + ' \u2192 ' + b).join('\n');
+    }
+    else if (typeof v === 'boolean') text = v ? 'yes' : 'no';
+    else text = String(v);
+    rows.push(el('div', {}, [el('dt', { text: k.replace(/_/g, ' ') }), el('dd', { text: text })]));
   }
+  return rows.length ? el('dl', { class: 'kv kv--evidence' }, rows) : null;
+}
 
-  if (alert.status && alert.status !== 'open') {
-    head.appendChild(el('span', { class: 'badge', text: alert.status }));
+/* The device the alert is about, read live from /api/devices/{id}: address,
+ * hardware, class, trust, every open port, and what else is open on it. An
+ * alert's own evidence is a snapshot from the moment the rule fired; this is
+ * the entity as it stands now, which is what an investigation starts from. */
+async function enrichWithDevice(card, deviceId) {
+  const slot = card.querySelector('.alertdetail__entity');
+  if (!slot) return;
+  try {
+    const resp = await fetch('/api/devices/' + encodeURIComponent(deviceId));
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const d = await resp.json();
+    const ports = (d.ports || []).filter((p) => !p.closed_at);
+    const risky = ports.filter((p) => p.risk && p.risk !== 'none');
+    const others = (d.alerts || []).filter((a) => a.status === 'open');
+    clear(slot);
+    slot.appendChild(el('dl', { class: 'kv' }, [
+      el('div', {}, [el('dt', { text: 'device' }), el('dd', { text: d.label || d.hostname || '\u2014' })]),
+      el('div', {}, [el('dt', { text: 'hostname' }), el('dd', { text: d.hostname || '\u2014' })]),
+      el('div', {}, [el('dt', { text: 'ip' }), el('dd', { text: d.ip || '\u2014' })]),
+      el('div', {}, [el('dt', { text: 'mac' }), el('dd', { text: (d.mac || '\u2014') + (d.mac_type === 'local' ? ' (randomised)' : '') })]),
+      el('div', {}, [el('dt', { text: 'vendor' }), el('dd', { text: d.vendor || 'unknown' })]),
+      el('div', {}, [el('dt', { text: 'class' }), el('dd', { text: d.device_class ? d.device_class + ' (' + (d.class_confidence || '?') + ' confidence)' : 'unclassified' })]),
+      el('div', {}, [el('dt', { text: 'trust' }), el('dd', { text: d.trusted ? 'trusted' : 'untrusted' })]),
+      el('div', {}, [el('dt', { text: 'online' }), el('dd', { text: d.online ? 'yes' : 'no' })]),
+      el('div', {}, [el('dt', { text: 'first seen' }), el('dd', { text: relativeTime(d.first_seen) })]),
+      el('div', {}, [el('dt', { text: 'last seen' }), el('dd', { text: relativeTime(d.last_seen) })]),
+      el('div', {}, [el('dt', { text: 'open ports' }), el('dd', { text: ports.length + (risky.length ? ' (' + risky.length + ' risky)' : '') })]),
+      el('div', {}, [el('dt', { text: 'open alerts on it' }), el('dd', { text: String(others.length) })]),
+    ]));
+    if (ports.length) {
+      slot.appendChild(el('div', { class: 'dev__ports' }, ports.map((p) =>
+        el('span', { class: 'port-pill' + (p.risk && p.risk !== 'none' ? ' port-pill--risky' : ''),
+                     title: p.product || p.service || '', text: p.port + '/' + (p.proto || 'tcp') + (p.service ? ' ' + p.service : '') }))));
+    }
+  } catch (err) {
+    clear(slot);
+    slot.appendChild(el('p', { class: 'alert__desc', text: 'Device record unavailable: ' + (err && err.message ? err.message : err) }));
   }
+}
 
-  const card = el('div', {
-    class: 'alert alert--' + sev + (alert.status === 'resolved' ? ' alert--muted' : ''),
-  }, [head]);
+/* What each lifecycle button does, in one line, because two of the three
+ * looked interchangeable without it. */
+const ACTION_HELP = {
+  acknowledge: 'I have seen this and I am on it. Keeps it listed, stops it counting as untriaged.',
+  resolve:     'Dealt with, or judged benign. Drops out of the open count; the record stays.',
+  reopen:      'Undo: back to open. For an acknowledged or resolved alert that turned out not to be done.',
+};
 
-  if (alert.description) {
-    card.appendChild(el('p', { class: 'alert__desc', text: alert.description }));
-  }
 
-  // The folded rules. Rendered as a disclosure rather than inline: the headline
-  // is one alert, and the point of correlation is that the reader does not have
-  // to read four. It is there for the reader who asks "what did it merge?".
+/* ---- playbooks --------------------------------------------------------
+ *
+ * The rule's own NEXT STEP says *what* ("isolate this device"); this says
+ * *how*, on the equipment this household actually has. Router paths are for
+ * a TP-Link Archer (web UI at the gateway address, or the Tether app) --
+ * the menu names differ on other brands but the controls exist everywhere.
+ * Each step is a plain instruction; the verification step is deliberate,
+ * because "I blocked it" and "it is blocked" are different claims.
+ */
+/* The router's admin address comes from the device list (the row classed
+ * "router"), never from a literal: this file is published with the repo. */
+function gatewayAddress() {
+  try {
+    const devs = (lastDevicesPayload && JSON.parse(lastDevicesPayload).devices) || [];
+    const gw = devs.find((d) => d.device_class === 'router' || d.device_class === 'gateway');
+    return gw && gw.ip ? 'http://' + gw.ip : null;
+  } catch (e) { return null; }
+}
+function routerUI() {
+  const gw = gatewayAddress();
+  return 'the router\'s admin page (' + (gw ? gw + ', ' : '') + 'TP-Link Archer: web UI or the Tether app)';
+}
+const PLAYBOOKS = {
+  isolate_device: {
+    title: 'Isolate this device',
+    steps: [
+      () => 'Identify it physically first: match the MAC and vendor above against the router\'s client list (' + routerUI() + ' → Network Map → Clients). On this network: "Apple" is a Mac or iPhone, "Microsoft" the Xbox, "HP" the printer, "TP-Link" the router itself, "Hui Zhou Gaoshengda" is the Wi-Fi module inside the smart TV. A randomised MAC with no vendor is a phone or laptop with private addressing on. The smart bulb and the robot vacuum will show up under a module maker you may not recognise (Tuya, Espressif, Broadlink, Roborock/Ecovacs) -- if a vendor here is one you cannot place, that is the device to pick up first.',
+      'Cut it off at the router: Advanced → Security → Access Control → turn Access Control on, mode Blacklist, add the device by MAC. This survives the device rebooting or changing IP.',
+      'If it is wired (the Xbox, the printer), unplug the Ethernet cable; the TV, bulb and vacuum come off at the power switch or the plug. Physical isolation beats every setting.',
+      'Verify: within 15 minutes its node on the Network tab should go dashed (not seen) and "online" in the Telemetry above should read "no". `ping <its ip>` from this machine should time out.',
+      'Then investigate, not before: open the device\'s own app (the TV\'s settings, the vacuum\'s or bulb\'s phone app), look for the service named in the alert, install any firmware update, and factory-reset it if you cannot explain the listener.',
+      'Re-admit only once a fresh scan no longer shows the port, then mark this alert Resolved. Move the TV, bulb and vacuum onto the router\'s IoT network from then on (Advanced → Wireless → IoT Network on this firmware; Guest Network with "allow guests to see each other" off is the fallback) so they can reach the internet but not your laptops.',
+    ],
+  },
+  arp_spoof: {
+    title: 'Check the gateway binding',
+    steps: [
+      'On this machine run `arp -a` and read the MAC next to the gateway IP. It must be the router\'s own MAC (the one PNMA pinned in config/pnma.toml as gateway_mac). Anything else means something is answering for the router.',
+      () => 'Look up the second MAC in the router\'s client list (' + routerUI() + ' → Network Map → Clients). A laptop with both Wi-Fi and Ethernet, or a mesh satellite, is the benign case.',
+      'If you cannot name it: change the Wi-Fi password (Wireless → WPA2/WPA3-Personal, AES), reboot the router, and re-check `arp -a` after two minutes.',
+      () => 'Stop-gap on this PC while you investigate, from an Administrator prompt: `netsh interface ipv4 add neighbors "Wi-Fi" ' + (gatewayAddress() || 'http://<gateway-ip>').replace('http://', '') + ' <router-mac>` pins the correct binding so traffic cannot be redirected. Undo later with `delete neighbors`.',
+      'Verify: the alert stops recurring on later runs (the "seen on N runs" badge stops climbing) and `arp -a` shows one stable MAC.',
+    ],
+  },
+  new_device: {
+    title: 'Decide whether this device is yours',
+    steps: [
+      () => 'Read vendor, hostname and first-seen time above. Then check what joined the Wi-Fi at that moment: ' + routerUI() + ' → Network Map → Clients shows the SSID and band it is on. This household expects: Mac and Windows laptops, two iPhones, one Android, an Xbox, an HP printer, a smart TV, a smart bulb and a robot vacuum. Anything that is not one of those needs a name or a block.',
+      'Yours: open it on the Network tab and mark it trusted with a name. That is the whole fix; the alert clears on the next run.',
+      'Not yours: block it (Advanced → Security → Access Control → Blacklist by MAC) and change the Wi-Fi password, because it had that password.',
+      'If it keeps returning under new randomised MACs, the password has leaked further than one device: rotate it and re-join only what you can name.',
+    ],
+  },
+  host: {
+    title: 'Fix the setting on this machine',
+    steps: [
+      'Open the Host tab: the card for this control shows what was measured, what was expected, and why it matters, with the exact setting name.',
+      'Defender controls live in Windows Security → Virus & threat protection → Manage settings (Tamper Protection, real-time, PUA under "Reputation-based protection" in App & browser control).',
+      'Audit and PowerShell logging are Group Policy or registry settings; the card names the key. Change it from an Administrator prompt or gpedit.msc.',
+      'Verify by re-running the collector; the card turns green and this alert resolves itself on the next detection pass.',
+    ],
+  },
+  unmeasured: {
+    title: 'Get a real answer',
+    steps: [
+      '"Could not be measured" is not "fine". The check needed Administrator and did not have it.',
+      'From an elevated terminal run `pnma collect` once; the Host tab updates within a minute and this alert resolves if the controls pass.',
+      'If it stays unknown after an elevated run, the reason on the card is a collector failure, not a permission problem -- that reason is the thing to chase.',
+    ],
+  },
+  identity: {
+    title: 'Review the account, then attest',
+    steps: [
+      'Open the provider\'s security page (Google: myaccount.google.com/security; Microsoft: account.microsoft.com/security; Apple: appleid.apple.com; banks: their app\'s security or devices page).',
+      'Check the control named in this alert -- MFA method, recovery email and phone, signed-in devices and connected apps, new-login alerts. Remove anything you do not recognise.',
+      'Go to the Identity tab and tap the state you actually found: ok, finding, or unknown. Attest what you verified, not what you hope.',
+      'A finding on a mailbox is urgent: every password reset for every other account flows through it.',
+    ],
+  },
+  availability: {
+    title: 'Find out why it dropped',
+    steps: [
+      'Check the obvious: power, Wi-Fi range, a device that was simply taken out of the house.',
+      'If it is a security camera, NAS, or anything that should always be up, look at its own status light and reboot it once.',
+      'Repeated drops on one device with everything else steady point at the device; drops across many devices at once point at the router or the Wi-Fi channel.',
+    ],
+  },
+  honeypot: {
+    title: 'Triage a honeypot hit',
+    steps: [
+      'This is traffic against your decoy, not your real network -- so first confirm the honeypot is still isolated: it must sit on a segment with no route to your laptops, phones or the router’s main LAN.',
+      'Read the source IP and the credentials it tried (in the evidence above). If any password it guessed is one you actually use anywhere, rotate that password now -- treat it as known to attackers.',
+      'If the source IP is one of YOUR devices, that is the real finding: something on your network is attacking the decoy, which means it is likely compromised. Isolate that device (see the network playbooks).',
+      'Otherwise this is intelligence, not an incident: note the commands the attacker ran to learn current tactics, then leave the honeypot to keep collecting. Nothing on your real network needs action.',
+      'Mark the alert Resolved once you have checked isolation and rotated any matching password.',
+    ],
+  },
+  cve: {
+    title: 'Close a known-exploited exposure',
+    steps: [
+      'Read the advisory above: it names the exposure class and links the emblematic CVE. This is matched on the open port/service, not a version-exact test, so first confirm the device really runs that service (the Telemetry section shows its open ports).',
+      () => 'If it is a laptop or the Xbox, fix it on the device: turn the service off (Remote Desktop, file sharing) or patch the OS. If it is the TV, bulb or vacuum, update its firmware from its own app and turn off any remote/debug feature you do not use.',
+      () => 'If you cannot fix it now, contain it: block the device by MAC at ' + routerUI() + ' (Advanced -> Security -> Access Control), or move it onto the IoT network so a compromise cannot reach your laptops.',
+      'Never leave the port forwarded to the internet -- check Advanced -> NAT Forwarding -> Port Forwarding / DMZ on the router and remove any entry for this device.',
+      'To actually learn the attack, do it in a sandbox against a target built to be attacked, never against this device. The FOR LEARNING note above and docs/PENTEST_LAB.md say how.',
+      'Verify: re-run a scan (or wait for the next collector pass); when the port no longer answers, the advisory clears. Then mark the alert Resolved.',
+    ],
+  },
+};
+const RULE_PLAYBOOK = {
+  c2_indicator: 'isolate_device', profile_deviation: 'isolate_device', service_drift: 'isolate_device',
+  arp_spoof: 'arp_spoof', new_device: 'new_device', cve_exposure: 'cve', honeypot_hit: 'honeypot',
+  host_posture: 'host', control_disabled: 'host', unmeasured_control: 'unmeasured',
+  identity_posture: 'identity', identity_unreviewed: 'identity', availability: 'availability',
+};
+function playbookFor(alert) {
+  const pb = PLAYBOOKS[RULE_PLAYBOOK[alert.rule_id]];
+  if (!pb) return null;
+  return el('div', { class: 'playbook' }, [
+    el('div', { class: 'alertdetail__label', text: 'how, step by step: ' + pb.title }),
+    el('ol', { class: 'alert__steps' }, pb.steps.map((st) => el('li', {}, inlineCode(typeof st === 'function' ? st() : st)))),
+  ]);
+}
+/* `backticks` in a step become <code>, so a command reads as a command. */
+function inlineCode(text) {
+  return text.split(/(`[^`]+`)/).filter(Boolean).map((part) =>
+    part.startsWith('`') ? el('code', { text: part.slice(1, -1) }) : part);
+}
+
+/**
+ * The drawer body: the SOC-analyst view of one alert, in plain language.
+ */
+function alertDetail(alert, onAction) {
+  const sev = SEVERITIES[alert.severity] ? alert.severity : 'low';
+  const parsed = parseDescription(alert.description);
+  const card = el('div', { class: 'alertdetail' });
+
+  card.appendChild(el('div', { class: 'sheet__head' }, [
+    el('div', { class: 'alertdetail__head' }, [
+      el('div', { class: 'alert__head' }, [
+        severityChip(sev, alert.severity_raw),
+        alert.status !== 'open' ? el('span', { class: 'badge', text: alert.status }) : null,
+        alert.count > 1 ? el('span', { class: 'badge', text: 'seen on ' + alert.count + ' runs' }) : null,
+      ]),
+      el('h3', { class: 'alertdetail__title', text: alert.title || alert.rule_id }),
+      el('p', { class: 'alertdetail__urgency', text: SEVERITY_MEANING[sev] }),
+      (window.PNMA.privacy && window.PNMA.privacy())
+        ? el('p', { class: 'alertdetail__masked', text: 'Addresses and names are masked for screenshots. Tap "masked" in the sidebar to show the real ones before you verify anything.' })
+        : null,
+    ]),
+    el('button', { class: 'btn', type: 'button', text: 'close', 'data-close': '1' }),
+  ]));
+
+  const section = (title, children, cls) => el('section', { class: 'alertdetail__sec ' + (cls || '') }, [
+    el('h4', { text: title }), ...children,
+  ]);
+  const paras = (items) => items.map((it) => el('div', { class: 'alertdetail__para' }, [
+    it.label && !/^(WHY THIS MATTERS( HERE)?|BENIGN EXPLANATION|MALICIOUS EXPLANATION|NEXT STEP|EXPLANATION)$/.test(it.label)
+      ? el('div', { class: 'alertdetail__label', text: it.label.toLowerCase() }) : null,
+    el('p', { class: 'alert__desc', text: it.body }),
+  ]));
+
+  if (parsed.lead.length) card.appendChild(section('What was seen', [el('p', { class: 'alert__desc', text: parsed.lead.join('\n\n') })]));
+  // Telemetry: the evidence as a grid, then the live device record.
+  const grid = evidenceGrid(alert.evidence);
+  const tele = [];
+  if (grid) tele.push(grid);
+  if (alert.device_id) tele.push(el('div', { class: 'alertdetail__entity' }, [el('p', { class: 'alert__desc', text: 'Loading device record\u2026' })]));
+  if (tele.length) card.appendChild(section('Telemetry', tele, 'alertdetail__sec--tele'));
+  if (parsed.groups.why.length) card.appendChild(section('Why it matters', paras(parsed.groups.why), 'alertdetail__sec--why'));
+  const bm = [];
+  if (parsed.groups.benign.length) bm.push(section('Could be harmless if…', paras(parsed.groups.benign), 'alertdetail__sec--benign'));
+  if (parsed.groups.malicious.length) bm.push(section('Could be an attack if…', paras(parsed.groups.malicious), 'alertdetail__sec--malicious'));
+  if (bm.length) card.appendChild(el('div', { class: 'alertdetail__pair' }, bm));
+  const todo = parsed.groups.steps.map((it) => stepsList(it.body));
+  const pb = playbookFor(alert);
+  if (pb) todo.push(pb);
+  if (todo.length) card.appendChild(section('What to do', todo, 'alertdetail__sec--steps'));
+
+  // How sure is this: corroboration, classification signals, coverage
+  // caveats, the technique, then the raw evidence for the reader who wants
+  // to check the working.
+  const sure = paras(parsed.groups.confidence);
   const folded = foldedRules(alert);
   if (folded.length) {
-    card.appendChild(el('details', { class: 'alert__folded' }, [
-      el('summary', {
-        text: folded.length + ' other ' + plural(folded.length, 'rule') +
-              ' fired on this and ' + (folded.length === 1 ? 'was' : 'were') +
-              ' folded in',
-      }),
-      el('ul', {}, folded.map((r) => el('li', {
-        text: (r.rule_id || 'unknown rule') +
-              (r.severity ? ' (' + r.severity + ')' : '') +
-              (r.title ? ' - ' + r.title : ''),
+    sure.push(el('div', { class: 'alertdetail__para' }, [
+      el('div', { class: 'alertdetail__label', text: folded.length + ' other ' + plural(folded.length, 'rule') + ' fired on this and ' + (folded.length === 1 ? 'was' : 'were') + ' folded in' }),
+      el('ul', { class: 'alertdetail__folded' }, folded.map((r) => el('li', {
+        text: (r.rule_id || 'unknown rule').replace(/_/g, ' ') + (r.severity ? ' (' + r.severity + ')' : '') + (r.title ? ' - ' + r.title : ''),
       }))),
     ]));
   }
-
-  // Raw evidence, same both-shapes handling as `factCard`.
   const ev = alert.evidence;
   const evText = (ev && typeof ev === 'object')
     ? (Object.keys(ev).length ? JSON.stringify(ev, null, 2) : null)
     : (typeof ev === 'string' && ev.trim() ? ev : null);
   if (evText) {
-    card.appendChild(el('details', { class: 'fact__evidence' }, [
-      el('summary', { text: typeof ev === 'string' ? 'evidence (unparsed)' : 'evidence' }),
+    sure.push(el('details', { class: 'fact__evidence' }, [
+      el('summary', { text: typeof ev === 'string' ? 'raw evidence (unparsed)' : 'raw evidence' }),
       el('pre', { text: evText }),
     ]));
   }
+  if (sure.length) card.appendChild(section('How sure is this', sure));
 
+  const device = alert.device_id ? deviceLabelFor(alert.device_id) : null;
   card.appendChild(el('div', { class: 'alert__meta' }, [
     el('span', { text: 'rule: ' + (alert.rule_id || '-') }),
-    alert.mitre_id
-      ? el('span', {
-          text: 'ATT&CK: ' + alert.mitre_id +
-                (alert.mitre_name ? ' ' + alert.mitre_name : ''),
-        })
-      : null,
-    alert.device_id ? el('span', { text: 'device: ' + alert.device_id }) : null,
+    alert.mitre_id ? el('span', { text: 'ATT&CK ' + alert.mitre_id + (alert.mitre_name ? ' ' + alert.mitre_name : '') }) : null,
+    alert.first_seen ? el('span', { text: 'first seen ' + relativeTime(alert.first_seen) }) : null,
     alert.last_seen ? el('span', { text: 'last seen ' + relativeTime(alert.last_seen) }) : null,
   ]));
 
-  // Actions follow the alert's place in its lifecycle, and the panel reads every
-  // status so each transition stays visible and reversible.
-  //
-  // An earlier draft read only open alerts. That made Acknowledge and Resolve
-  // indistinguishable -- both simply removed the row -- and left `reopen`
-  // unreachable from the UI even though the API implements it. Two buttons that
-  // appear to do different things and observably do the same one are worse than
-  // either alone, and an acknowledged alert you cannot see is an alert you have
-  // silently dropped.
-  //
-  // Nothing here deletes. The API exposes no destructive action and this panel
-  // does not synthesise one out of the three it has.
   const available = ALERT_ACTIONS[alert.status] || [];
-  if (onAction && alert.id !== undefined && available.length) {
-    const buttons = available.map(([, label]) =>
-      el('button', { class: 'btn', type: 'button', text: label }));
-    buttons.forEach((btn, i) => {
-      btn.addEventListener('click', () => onAction(alert.id, available[i][0], buttons));
-    });
-    card.appendChild(el('div', { class: 'alert__actions' }, buttons));
+  const buttons = available.map(([action, label]) => el('button', { class: 'btn', type: 'button', text: label, title: ACTION_HELP[action] }));
+  buttons.forEach((btn, i) => btn.addEventListener('click', () => onAction(alert.id, available[i][0], buttons)));
+  if (available.length) {
+    card.appendChild(el('ul', { class: 'alertdetail__help' }, available.map(([action, label]) =>
+      el('li', {}, [el('strong', { text: label + ': ' }), ACTION_HELP[action]]))));
   }
-
+  if (alert.device_id && window.PNMA.openDeviceSheet) {
+    const b = el('button', { class: 'btn btn--primary', type: 'button', text: 'Open ' + (device || 'device') });
+    b.addEventListener('click', () => { closeAlertSheet(); window.PNMA.openDeviceSheet(alert.device_id); });
+    buttons.push(b);
+  }
+  if (buttons.length) card.appendChild(el('div', { class: 'sheet__actions' }, buttons));
   return card;
+}
+
+let openAlertId = null;
+let openAlertSignature = null;
+let alertSheetCloseTimer = null;
+
+function closeAlertSheet() {
+  const sheet = document.getElementById('alert-sheet');
+  if (!sheet || sheet.hidden) return;
+  openAlertId = null;
+  openAlertSignature = null;
+  sheet.classList.remove('is-open');
+  alertSheetCloseTimer = setTimeout(() => { sheet.hidden = true; clear(sheet); }, 180);
+}
+
+function openAlertSheet(alert, onAction) {
+  const sheet = document.getElementById('alert-sheet');
+  if (!sheet) return;
+  clearTimeout(alertSheetCloseTimer);
+  const wasOpen = !sheet.hidden;
+  // A poll that changed nothing about *this* alert must not touch the
+  // drawer: a re-firing rule bumps last_seen every detection pass, and
+  // rebuilding on each one would throw the reader back to the top of a
+  // six-step playbook once a minute. Same invariant as viz.js's
+  // `unchanged()`, applied to the one element that outlives a re-render.
+  const signature = JSON.stringify(alert);
+  if (wasOpen && openAlertId === alert.id && openAlertSignature === signature) return;
+  // When it does rebuild (an action changed the status), keep the reader's
+  // place: scroll offset and whichever disclosures they had open.
+  const prev = sheet.querySelector('.sheet__card');
+  const scrollTop = prev && openAlertId === alert.id ? prev.scrollTop : 0;
+  const openDetails = prev && openAlertId === alert.id
+    ? Array.from(prev.querySelectorAll('details[open]')).map((d) => d.querySelector('summary') && d.querySelector('summary').textContent) : [];
+  openAlertId = alert.id;
+  openAlertSignature = signature;
+  sheet.hidden = false;
+  clear(sheet);
+  const card = el('div', { class: 'sheet__card sheet__card--wide' }, [alertDetail(alert, onAction)]);
+  sheet.appendChild(card);
+  card.querySelectorAll('details').forEach((d) => {
+    const s = d.querySelector('summary');
+    if (s && openDetails.includes(s.textContent)) d.open = true;
+  });
+  card.scrollTop = scrollTop;
+  if (alert.device_id) enrichWithDevice(card, alert.device_id);
+  card.querySelector('[data-close]').addEventListener('click', closeAlertSheet);
+  if (!sheet.dataset.wired) {
+    sheet.dataset.wired = '1';
+    sheet.addEventListener('click', (ev) => { if (ev.target === sheet) closeAlertSheet(); });
+  }
+  if (wasOpen) sheet.classList.add('is-open');
+  else requestAnimationFrame(() => requestAnimationFrame(() => sheet.classList.add('is-open')));
 }
 
 /**
@@ -769,9 +1119,100 @@ function alertsEmpty() {
   ]);
 }
 
+/* Triage filters survive a re-render (the panel rebuilds on every changed
+ * poll) but not a reload -- a filter is a working position, not a setting. */
+const alertFilter = { severity: null, status: null, mitre: null };
+
+function applyAlertFilter(container) {
+  let shown = 0;
+  container.querySelectorAll('.alertrow').forEach((row) => {
+    const hide = (alertFilter.severity && row.dataset.severity !== alertFilter.severity) ||
+                 (alertFilter.status && row.dataset.status !== alertFilter.status) ||
+                 (alertFilter.mitre && row.dataset.mitre !== alertFilter.mitre);
+    row.hidden = hide;
+    if (!hide) shown += 1;
+  });
+  container.querySelectorAll('.triage__chip').forEach((c) => {
+    c.classList.toggle('is-on', (c.dataset.severity && c.dataset.severity === alertFilter.severity) ||
+                                 (c.dataset.status && c.dataset.status === alertFilter.status));
+  });
+  // A MITRE filter (arrived here from a click on the ATT&CK matrix) shows a
+  // removable banner, since there is no chip for it in the triage strip.
+  let banner = container.querySelector('.triage__mitre');
+  if (alertFilter.mitre) {
+    if (!banner) {
+      banner = el('button', { class: 'triage__mitre', type: 'button', title: 'Clear this technique filter' });
+      const strip = container.querySelector('.triage');
+      if (strip) strip.appendChild(banner);
+    }
+    clear(banner);
+    banner.appendChild(el('span', { text: 'technique ' + alertFilter.mitre + ' ✕' }));
+    banner.onclick = () => { alertFilter.mitre = null; applyAlertFilter(container); };
+  } else if (banner) {
+    banner.remove();
+  }
+  const none = container.querySelector('.alertqueue__none');
+  if (none) none.hidden = shown > 0;
+}
+
+/* Called from the ATT&CK matrix (viz.js): filter the queue to one technique
+ * and bring it into view. The matrix and the queue live on the same tab, so
+ * this is a scroll, not a tab switch. */
+function filterAlertsByTechnique(mitreId) {
+  alertFilter.mitre = mitreId;
+  alertFilter.severity = null;
+  alertFilter.status = null;
+  const container = document.getElementById('alerts-body');
+  if (container) {
+    applyAlertFilter(container);
+    const q = container.querySelector('.alertqueue');
+    if (q) q.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+}
+
+/* Browser notifications for a new critical/high alert while the page is
+ * open. Opt-in, local to this browser, no egress: the one delivery channel
+ * that costs the agent nothing on its own safety posture. */
+const NOTIFY_KEY = 'pnma.notify';
+let seenAlertIds = null;
+function notifyOn() { try { return localStorage.getItem(NOTIFY_KEY) === '1'; } catch (e) { return false; } }
+function notifyNew(alerts) {
+  const urgent = alerts.filter((a) => a.status === 'open' && (a.severity === 'critical' || a.severity === 'high'));
+  const ids = new Set(urgent.map((a) => a.id));
+  if (seenAlertIds === null) { seenAlertIds = ids; return; }
+  const fresh = urgent.filter((a) => !seenAlertIds.has(a.id));
+  seenAlertIds = ids;
+  if (!fresh.length || !notifyOn() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const n = new Notification('PNMA: ' + fresh.length + ' new ' + plural(fresh.length, 'alert'), {
+    body: fresh.map((a) => a.severity.toUpperCase() + ' ' + (a.title || a.rule_id)).join('\n'), tag: 'pnma-alerts',
+  });
+  n.addEventListener('click', () => { window.focus(); if (window.PNMA.showTab) window.PNMA.showTab('alerts', 'alert:' + fresh[0].id); });
+}
+function buildNotifyPill() {
+  const tools = document.getElementById('masthead-tools');
+  if (!tools || typeof Notification === 'undefined') return;
+  const pill = el('button', { class: 'tool', type: 'button' });
+  const paint = () => {
+    const on = notifyOn() && Notification.permission === 'granted';
+    pill.textContent = on ? '◉ notify' : '○ notify';
+    pill.className = 'tool' + (on ? ' tool--on' : '');
+    pill.title = on ? 'A browser notification is raised for every new critical or high alert while this page is open. Tap to turn off.'
+                    : 'Tap to get a browser notification for new critical or high alerts while this page is open.';
+  };
+  pill.addEventListener('click', async () => {
+    if (notifyOn()) { try { localStorage.setItem(NOTIFY_KEY, '0'); } catch (e) { /* */ } paint(); return; }
+    const perm = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    try { localStorage.setItem(NOTIFY_KEY, perm === 'granted' ? '1' : '0'); } catch (e) { /* */ }
+    paint();
+  });
+  paint();
+  tools.appendChild(pill);
+}
+
 function renderAlerts(payload, container, onAction) {
   const alerts = normaliseAlerts((payload && payload.alerts) || []);
   clear(container);
+  notifyNew(alerts);
 
   if (!alerts.length) {
     container.appendChild(alertsEmpty());
@@ -785,31 +1226,33 @@ function renderAlerts(payload, container, onAction) {
   const open = alerts.filter((a) => a.status === 'open');
   const counts = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const a of open) counts[a.severity] += 1;
-
-  // How much correlation actually did, across everything shown. This is the
-  // number that says whether the feature is earning its place.
+  const byStatus = { open: open.length, acknowledged: 0, resolved: 0 };
+  for (const a of alerts) if (a.status !== 'open') byStatus[a.status] = (byStatus[a.status] || 0) + 1;
   let foldedTotal = 0;
   for (const a of alerts) foldedTotal += foldedRules(a).length;
 
-  const triaged = alerts.length - open.length;
-
-  container.appendChild(el('div', { class: 'metrics' }, [
-    el('div', { class: 'stat stat--total' }, [
-      el('div', { class: 'stat__n', text: String(open.length) }),
-      el('div', { class: 'stat__label', text: plural(open.length, 'open alert') }),
+  // Triage strip: every count is also the filter for it. Tap a severity to
+  // see only that, tap again to clear.
+  const chip = (kind, value, n, label) => {
+    const c = el('button', { class: 'triage__chip triage__chip--' + value, type: 'button', ['data-' + kind]: value }, [
+      el('span', { class: 'triage__n', text: String(n) }), el('span', { class: 'triage__label', text: label }),
+    ]);
+    c.addEventListener('click', () => {
+      alertFilter[kind] = alertFilter[kind] === value ? null : value;
+      applyAlertFilter(container);
+    });
+    return c;
+  };
+  container.appendChild(el('div', { class: 'triage' }, [
+    el('div', { class: 'triage__group' }, [
+      chip('severity', 'critical', counts.critical, 'critical'), chip('severity', 'high', counts.high, 'high'),
+      chip('severity', 'medium', counts.medium, 'medium'), chip('severity', 'low', counts.low, 'low'),
     ]),
-    el('div', { class: 'stat stat--finding' }, [
-      el('div', { class: 'stat__n', text: String(counts.critical + counts.high) }),
-      el('div', { class: 'stat__label', text: 'open, critical or high' }),
+    el('div', { class: 'triage__group' }, [
+      chip('status', 'open', byStatus.open, 'open'), chip('status', 'acknowledged', byStatus.acknowledged, 'acknowledged'),
+      chip('status', 'resolved', byStatus.resolved, 'resolved'),
     ]),
-    el('div', { class: 'stat' }, [
-      el('div', { class: 'stat__n', text: String(foldedTotal) }),
-      el('div', { class: 'stat__label', text: 'folded by correlation' }),
-    ]),
-    el('div', { class: 'stat' }, [
-      el('div', { class: 'stat__n', text: String(triaged) }),
-      el('div', { class: 'stat__label', text: 'acknowledged or resolved' }),
-    ]),
+    el('span', { class: 'triage__note', text: foldedTotal + ' ' + plural(foldedTotal, 'finding') + ' folded by correlation' }),
   ]));
 
   // Open first, then acknowledged, then resolved; severity inside each. Sorting
@@ -823,8 +1266,20 @@ function renderAlerts(payload, container, onAction) {
     return d || (b.last_seen || 0) - (a.last_seen || 0);
   });
 
-  for (const a of sorted) container.appendChild(alertCard(a, onAction));
+  const openOne = (a) => openAlertSheet(a, onAction);
+  container.appendChild(el('div', { class: 'alertqueue' }, sorted.map((a) => alertRow(a, openOne)).concat([
+    el('p', { class: 'placeholder alertqueue__none', text: 'Nothing matches this filter.', hidden: true }),
+  ])));
+  applyAlertFilter(container);
+
+  // An action taken inside the drawer forces this re-render; keep the drawer
+  // on the same alert, now in its new state, instead of snapping it shut.
+  if (openAlertId !== null) {
+    const cur = alerts.find((a) => a.id === openAlertId);
+    if (cur) openAlertSheet(cur, onAction); else closeAlertSheet();
+  }
 }
+
 /* ================================================================= devices */
 
 /**
@@ -927,7 +1382,7 @@ function deviceRow(d) {
       : null,
   ]);
 
-  return el('div', { class: 'dev' + (attention ? ' dev--attention' : '') }, [
+  return el('div', { class: 'dev' + (attention ? ' dev--attention' : ''), 'data-anchor': 'device:' + d.device_id }, [
     identity, addr, el('div', { class: 'dev__ports' }, portEls), badges,
   ]);
 }
@@ -968,22 +1423,13 @@ function renderDevices(payload, container) {
   const online = devices.filter((d) => d.online);
   const untrustedOnline = online.filter((d) => !d.trusted);
 
-  container.appendChild(el('div', { class: 'metrics' }, [
-    el('div', { class: 'stat stat--total' }, [
-      el('div', { class: 'stat__n', text: String(devices.length) }),
-      el('div', { class: 'stat__label', text: plural(devices.length, 'device') }),
-    ]),
-    el('div', { class: 'stat stat--ok' }, [
-      el('div', { class: 'stat__n', text: String(online.length) }),
-      el('div', { class: 'stat__label', text: 'online now' }),
-    ]),
-    // Always rendered, including at zero, for the same reason the posture panel
-    // always renders its unknown count: the absence of untrusted devices is a
-    // result, and it should not be indistinguishable from an unrendered one.
-    el('div', { class: 'stat stat--finding' }, [
-      el('div', { class: 'stat__n', text: String(untrustedOnline.length) }),
-      el('div', { class: 'stat__label', text: 'untrusted, online' }),
-    ]),
+  // One line, not three tiles: the overview's "devices online" tile already
+  // carries these numbers and links here. Repeating them as a second row of
+  // stat cards was the first thing the reader saw on this tab.
+  container.appendChild(el('p', { class: 'devices__caption' }, [
+    el('strong', { text: String(devices.length) }), ' ' + plural(devices.length, 'device') + ' \u00b7 ',
+    el('strong', { text: String(online.length) }), ' online now \u00b7 ',
+    el('strong', { class: untrustedOnline.length ? 'is-finding' : '', text: String(untrustedOnline.length) }), ' untrusted and online',
   ]));
 
   // Attention first, then online, then by recency. The API already sorts by
@@ -1254,6 +1700,10 @@ async function loadPanel(opts, force) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const body = await resp.text();
     if (!force && body === opts.getLast() && container.firstChild) return;
+    // The privacy mask can only hide a hostname it has been told about, and
+    // alert prose quotes hostnames. Wait for viz.js's name preload so the
+    // first paint is already masked (see PNMA.namesReady).
+    if (window.PNMA && window.PNMA.namesReady) await window.PNMA.namesReady;
     opts.setLast(body);
     opts.render(JSON.parse(body), container);
   } catch (err) {
@@ -1286,7 +1736,7 @@ async function alertAction(id, action, buttons) {
     await loadAlerts(true);
   } catch (err) {
     for (const b of buttons) b.disabled = false;
-    const card = buttons[0] && buttons[0].closest('.alert');
+    const card = buttons[0] && buttons[0].closest('.alertdetail');
     if (card && !card.querySelector('.alert__error')) {
       card.appendChild(el('p', {
         class: 'alert__desc alert__error',
@@ -1342,10 +1792,12 @@ Object.assign(window.PNMA, { el, clear, plural, relativeTime, stateChip, severit
 // Exported for the same reason as the posture renderer: each panel can be
 // driven from a fixture during development without standing up the API.
 window.PNMA.renderAlerts = renderAlerts;
+window.PNMA.filterAlertsByTechnique = filterAlertsByTechnique;
 window.PNMA.renderDevices = renderDevices;
 window.PNMA.renderAvailability = renderAvailability;
 
 document.addEventListener('DOMContentLoaded', () => {
+  buildNotifyPill();
   loadHostPosture();
   loadDevices();
   loadAlerts();

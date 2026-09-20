@@ -38,17 +38,27 @@
    * Applied in app.js's `el()` and this file's `svgText()`, i.e. at the point
    * of rendering, never to the data. Toggling it re-renders everything. */
   const PRIV_KEY = 'pnma.privacy';
-  let privacy = true;
-  try { privacy = localStorage.getItem(PRIV_KEY) !== '0'; } catch (e) { /* private mode */ }
+  // Off unless switched on. The mask exists for screenshots and write-ups;
+  // the person triaging an alert needs the real address and MAC in front of
+  // them to check it against the router, and a dashboard that hid those by
+  // default was making its own alerts unverifiable.
+  let privacy = false;
+  try { privacy = localStorage.getItem(PRIV_KEY) === '1'; } catch (e) { /* private mode */ }
 
   const MAC_RE = /\b([0-9a-f]{2})[:-]([0-9a-f]{2})[:-]([0-9a-f]{2})[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-]([0-9a-f]{2})\b/gi;
   const IP_RE = /\b(?:\d{1,3}\.){3}(\d{1,3})\b/g;
   const EMAIL_RE = /\b([a-z0-9._%+-])[a-z0-9._%+-]*@([a-z0-9.-]+\.[a-z]{2,})\b/gi;
   const knownNames = new Set(); // hostnames learned from payloads
+  // Hostnames that are a role, not an identity. Learning "gateway" from the
+  // router's DHCP name and then masking every occurrence of the word turned
+  // the Agent tab's own "Gateway fingerprint enforced" into "G··· fingerprint
+  // enforced" -- the mask eating the operator's copy, not the reader's data.
+  const GENERIC_NAMES = new Set(['gateway', 'router', 'localhost', 'unknown', 'iphone', 'ipad', 'android',
+                                 'printer', 'laptop', 'desktop', 'phone', 'home', 'lan', 'wifi', 'default']);
 
   function maskNames(s) {
     for (const name of knownNames) {
-      if (name.length < 3) continue;
+      if (name.length < 3 || GENERIC_NAMES.has(name.toLowerCase())) continue;
       const re = new RegExp('\\b' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'gi');
       s = s.replace(re, (m) => m[0] + '···');
     }
@@ -65,6 +75,15 @@
   };
   PNMA.privacy = () => privacy;
   PNMA.learnName = (n) => { if (n && typeof n === 'string') knownNames.add(n); };
+  /* Resolved once every hostname the mask needs to know about has been
+   * learned. app.js's panels await this before their first paint: an alert
+   * description quotes hostnames in prose ("hostname 'cam-frontdoor'
+   * matches camera"), and on a cold load the alerts fetch can finish before
+   * the devices fetch that teaches the mask those names. The panel then
+   * paints the name raw -- and because every panel skips re-rendering an
+   * unchanged payload, it stays raw until the data happens to change. The
+   * promise is assigned at startup (below), after the fetch wrapper exists. */
+  PNMA.namesReady = Promise.resolve();
 
   function setPrivacy(on) {
     privacy = on;
@@ -118,6 +137,12 @@
     });
     gate.appendChild(form);
     input.focus();
+    // Two frames, not one: `hidden = false` and adding `.is-open` in the same
+    // tick gives the browser nothing to transition *from* -- it can coalesce
+    // both style changes into one layout pass and skip straight to the end
+    // state. A rAF forces the "closed" styles (opacity: 0, scale: 0.98) to
+    // actually paint first.
+    requestAnimationFrame(() => requestAnimationFrame(() => gate.classList.add('is-open')));
   }
 
   /* ================================================================ helpers */
@@ -148,6 +173,44 @@
     const resp = await fetch(path);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     return resp.json();
+  }
+
+  /**
+   * Same fetch, but keeps the raw text alongside the parsed body so a caller
+   * can compare bytes across polls the way app.js's `loadPanel` already does
+   * for the host/alerts/devices/availability panels.
+   */
+  async function getRaw(path) {
+    const resp = await fetch(path);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const text = await resp.text();
+    return { text, json: JSON.parse(text) };
+  }
+
+  /* Last combined payload per polled panel, so an unchanged tick is a no-op
+   * in the DOM here too.
+   *
+   * Every panel below rebuilds its section from scratch on every poll --
+   * `clear(body)` followed by a full re-append -- because nothing short of
+   * that can safely reconcile an SVG network map or a re-sorted device list.
+   * app.js's four panels already guard that rebuild behind a byte-for-byte
+   * comparison of the last response, specifically because rebuilding closes
+   * every open `<details>` the reader had open. This file's panels never got
+   * that guard, which is a real gap and not merely a missed optimisation:
+   * the Agent tab's 11 detection-rule disclosures and the Host tab's ATT&CK
+   * link both live under a viz.js loader, and both silently collapsed
+   * whatever the reader had open every 60-120 seconds. A dashboard meant to
+   * "sit open on a second screen for hours" (style.css's own token comment)
+   * cannot also be quietly resetting itself that often.
+   *
+   * `unchanged(key, signature)` returns true (and does nothing else) when
+   * this poll's signature matches the last one recorded under `key`; a
+   * caller returns immediately on `true` rather than re-rendering. */
+  const lastSignature = {};
+  function unchanged(key, signature, hasContent) {
+    const same = lastSignature[key] === signature && hasContent;
+    lastSignature[key] = signature;
+    return same;
   }
 
   function fail(container, label, err) {
@@ -181,27 +244,117 @@
     ['alerts', 'Alerts'], ['identity', 'Identity'], ['agent', 'Agent'],
   ];
   const badges = {}; // tab -> count element
+  let tabIndicator = null;
+  // True once the sidebar layout (style.css's `min-width: 900px` block) has
+  // turned `.tabs` into a vertical rail -- the indicator has to measure and
+  // animate along a different axis in that mode. A MediaQueryList rather
+  // than a one-off `matchMedia().matches` read because it has to stay right
+  // across a resize, not just at load. Built lazily rather than at module
+  // scope: this IIFE runs the moment the script loads, before there is
+  // necessarily a real `window.matchMedia` to call -- the repo's own
+  // Node-based privacy-mask test loads this file against a minimal stub
+  // `window`/`document` with neither a real DOM nor `matchMedia`, precisely
+  // so it can check `PNMA.mask` in isolation without a browser. Calling
+  // `matchMedia` eagerly here would throw before that test ever reaches the
+  // one function it actually wants.
+  let sidebarMQ = null;
+  function getSidebarMQ() {
+    if (!sidebarMQ && typeof window.matchMedia === 'function') {
+      sidebarMQ = window.matchMedia('(min-width: 900px)');
+    }
+    return sidebarMQ;
+  }
 
-  function showTab(name) {
+  /* Slides the indicator to the newly active tab instead of just recolouring
+   * it in place -- an underline sliding under a horizontal bar, or a rail
+   * sliding down a vertical one, depending on `sidebarMQ`. Desktop-bar-or-
+   * sidebar only: style.css hides the indicator entirely on the phone
+   * bottom bar, where each tab already gets its own top-border highlight and
+   * a second moving element would just be visual noise on five cramped
+   * icons. Measured in real pixels off the button rather than done in pure
+   * CSS because the tab list is a variable-size flex row with a badge in
+   * some of them; there is no selector for "the size of whichever button has
+   * .is-active" without measuring it. Colour comes from the button's own
+   * `--nav-color` custom property (set in style.css by `data-tab`) read back
+   * with getComputedStyle, so the six hues stay defined in exactly one file. */
+  function moveIndicator(btn) {
+    if (!tabIndicator || !btn) return;
+    const color = getComputedStyle(btn).getPropertyValue('--nav-color').trim();
+    if (color) tabIndicator.style.background = color;
+    const mq = getSidebarMQ();
+    if (mq && mq.matches) {
+      tabIndicator.style.transform = 'translateY(' + btn.offsetTop + 'px)';
+      tabIndicator.style.height = btn.offsetHeight + 'px';
+      tabIndicator.style.width = '';
+    } else {
+      tabIndicator.style.transform = 'translateX(' + btn.offsetLeft + 'px)';
+      tabIndicator.style.width = btn.offsetWidth + 'px';
+      tabIndicator.style.height = '';
+    }
+  }
+
+  /* `anchor`, when given, is the `data-anchor` of a row inside the target
+   * tab: the row is scrolled into view and flashed, so a gap on the overview
+   * lands on the control it names rather than at the top of a 21-row list.
+   * Retries briefly because the target panel may still be rendering. */
+  function showTab(name, anchor) {
     if (!TABS.some(([k]) => k === name)) name = 'overview';
     document.querySelectorAll('section[data-tab]').forEach((s) => {
       s.classList.toggle('is-active', s.dataset.tab === name);
     });
+    let activeBtn = null;
     document.querySelectorAll('.tabs__tab').forEach((b) => {
-      b.classList.toggle('is-active', b.dataset.tab === name);
-      b.setAttribute('aria-selected', b.dataset.tab === name ? 'true' : 'false');
+      const active = b.dataset.tab === name;
+      b.classList.toggle('is-active', active);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (active) activeBtn = b;
     });
+    moveIndicator(activeBtn);
     if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
-    window.scrollTo({ top: 0 });
+    if (anchor) revealAnchor(name, anchor, 10);
+    else window.scrollTo({ top: 0 });
   }
+
+  function revealAnchor(tab, anchor, tries) {
+    const rows = document.querySelectorAll('section[data-tab="' + tab + '"] [data-anchor]');
+    const row = Array.from(rows).find((r) => r.dataset.anchor === anchor);
+    if (!row) { if (tries > 0) setTimeout(() => revealAnchor(tab, anchor, tries - 1), 150); return; }
+    // Open the disclosure it lives in, if any, so the scroll has a target.
+    for (let d = row.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+    row.scrollIntoView({ block: 'center' });
+    row.classList.remove('is-target');
+    void row.offsetWidth; // restart the flash animation on a repeat visit
+    row.classList.add('is-target');
+    row.addEventListener('animationend', () => row.classList.remove('is-target'), { once: true });
+  }
+
+  // Escape dismisses whichever sheet is open. Each sheet's own close logic
+  // runs on a click whose target is the backdrop, so that is what we send.
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    document.querySelectorAll('.sheet.is-open').forEach((sh) => sh.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  });
 
   function buildTabs() {
     const nav = document.getElementById('tabs');
+    tabIndicator = el('div', { class: 'tabs__indicator', 'aria-hidden': 'true' });
+    nav.appendChild(tabIndicator);
+    // The indicator has to land on the right button before first paint, and
+    // on a resize (rotating a phone into a width where the desktop tab bar
+    // takes over, or crossing the 900px sidebar line) it has to re-measure --
+    // a stale transform left over from a different layout's axis would put
+    // it nowhere near the tab. `resize` covers most of that; the MQ's own
+    // `change` event covers a window resized slowly enough, or a devtools
+    // responsive-mode jump, that never fires `resize` on this frame.
+    const reflow = () => moveIndicator(document.querySelector('.tabs__tab.is-active'));
+    window.addEventListener('resize', reflow);
+    const mq = getSidebarMQ();
+    if (mq) mq.addEventListener('change', reflow);
     for (const [key, label] of TABS) {
       const badge = el('span', { class: 'tabs__badge', hidden: true });
       badges[key] = badge;
       const b = el('button', { class: 'tabs__tab', 'data-tab': key, role: 'tab', type: 'button' },
-                   [el('span', { class: 'tabs__glyph', text: TAB_GLYPH[key] }),
+                   [el('span', { class: 'tabs__glyph' }, [TAB_ICON[key]()]),
                     el('span', { class: 'tabs__label', text: label }), badge]);
       b.addEventListener('click', () => showTab(key));
       nav.appendChild(b);
@@ -209,8 +362,63 @@
     window.addEventListener('hashchange', () => showTab(location.hash.slice(1)));
     showTab(location.hash.slice(1));
   }
-  const TAB_GLYPH = { overview: '◎', network: '⌘', host: '⌂', alerts: '⚠',
-                      identity: '☺', agent: '⚙' };
+
+  /* Hand-drawn, not a font glyph or an emoji: a 20x20 stroke icon per tab,
+   * built the same way everything else on this page is built -- createElementNS,
+   * no markup string, nothing that could be reinterpreted as HTML. Identity's
+   * old glyph was a Unicode smiley (☺), which read as a joke on a page about
+   * account compromise; the rest were Unicode dingbats standing in for shapes
+   * (a gear, a house, a warning sign) that are worth just drawing properly.
+   * Colour is not set here -- `.tabs__icon` in style.css reads it from each
+   * button's `--nav-color`, via `stroke="currentColor"` / `fill="currentColor"`. */
+  function navIcon(children) {
+    return svg('svg', { viewBox: '0 0 20 20', class: 'tabs__icon', 'aria-hidden': 'true', focusable: 'false' }, children);
+  }
+  const STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6,
+                   'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+  const TAB_ICON = {
+    // Overview: a gauge -- track, needle, hub. Echoes the posture rings this
+    // tab is actually made of.
+    overview: () => navIcon([
+      svg('circle', Object.assign({ cx: 10, cy: 10, r: 7 }, STROKE)),
+      svg('line', Object.assign({ x1: 10, y1: 10, x2: 10, y2: 4.7, transform: 'rotate(-40 10 10)' }, STROKE)),
+      svg('circle', { cx: 10, cy: 10, r: 1.3, fill: 'currentColor' }),
+    ]),
+    // Network: hub and spokes -- a miniature of the network-map panel itself.
+    network: () => navIcon([
+      ...[[10, 3.4], [16, 7], [16, 13], [4, 13], [4, 7]].map(([x, y]) =>
+        svg('line', Object.assign({ x1: 10, y1: 10, x2: x, y2: y }, STROKE))),
+      ...[[10, 3.4], [16, 7], [16, 13], [4, 13], [4, 7]].map(([x, y]) =>
+        svg('circle', { cx: x, cy: y, r: 1.5, fill: 'var(--bg-raised)', stroke: 'currentColor', 'stroke-width': 1.4 })),
+      svg('circle', { cx: 10, cy: 10, r: 1.8, fill: 'currentColor' }),
+    ]),
+    // Host: a monitor on a stand, for checks run against this machine.
+    host: () => navIcon([
+      svg('rect', Object.assign({ x: 3, y: 4, width: 14, height: 9.4, rx: 1.6 }, STROKE)),
+      svg('line', Object.assign({ x1: 10, y1: 13.4, x2: 10, y2: 16 }, STROKE)),
+      svg('line', Object.assign({ x1: 6.5, y1: 16.6, x2: 13.5, y2: 16.6 }, STROKE)),
+    ]),
+    // Alerts: warning triangle with an exclamation mark, drawn rather than
+    // borrowed from a font so the corners join the same way every other icon
+    // here does.
+    alerts: () => navIcon([
+      svg('path', Object.assign({ d: 'M10 3.1 L17.4 16.5 H2.6 Z' }, STROKE)),
+      svg('line', Object.assign({ x1: 10, y1: 8.2, x2: 10, y2: 12 }, STROKE)),
+      svg('circle', { cx: 10, cy: 14.3, r: 0.9, fill: 'currentColor' }),
+    ]),
+    // Identity: a person, replacing the smiley -- this tab is about account
+    // compromise, not a mood.
+    identity: () => navIcon([
+      svg('circle', Object.assign({ cx: 10, cy: 6.5, r: 3.1 }, STROKE)),
+      svg('path', Object.assign({ d: 'M3.7 17c0-4.3 3-6.7 6.3-6.7s6.3 2.4 6.3 6.7' }, STROKE)),
+    ]),
+    // Agent: a shield with a check -- its own safety posture, self-reported.
+    agent: () => navIcon([
+      svg('path', Object.assign({ d: 'M10 2.6 L16.8 5.1 V9.9 C16.8 14.5 13.8 17.1 10 17.9 ' +
+                                       'C6.2 17.1 3.2 14.5 3.2 9.9 V5.1 Z' }, STROKE)),
+      svg('path', Object.assign({ d: 'M7.1 10 L9.1 12 L13 8' }, STROKE)),
+    ]),
+  };
 
   function setBadge(tab, n, cls) {
     const b = badges[tab];
@@ -224,9 +432,9 @@
     const tools = document.getElementById('masthead-tools');
     const priv = el('button', {
       class: 'tool' + (privacy ? ' tool--on' : ''), type: 'button',
-      title: privacy ? 'Privacy mode on: identifiers are masked. Tap to reveal.'
-                     : 'Privacy mode off: full identifiers shown. Tap to mask.',
-      text: privacy ? '◐ masked' : '● revealed',
+      title: privacy ? 'Identifiers are masked for screenshots. Tap to show real addresses, MACs and names.'
+                     : 'Real identifiers shown. Tap to mask them for a screenshot or write-up.',
+      text: privacy ? '◐ masked' : '○ mask',
     });
     priv.addEventListener('click', () => setPrivacy(!privacy));
     tools.appendChild(priv);
@@ -240,7 +448,8 @@
    * percentage of *everything*, so unknown costs exactly what a finding
    * costs -- that is the gamification rule of this page, and it is the same
    * rule the host module was built on. */
-  function ring(label, counts, sub) {
+  function ring(label, counts, sub, opts) {
+    opts = opts || {};
     const total = counts.ok + counts.finding + counts.unknown;
     const r = 44, c = 2 * Math.PI * r, cx = 60, cy = 60;
     const g = svg('svg', { viewBox: '0 0 120 120', class: 'ring', role: 'img' }, [
@@ -260,28 +469,40 @@
       offset += (n / total) * c;
     }
     const score = total ? Math.round((counts.ok / total) * 100) : null;
-    g.appendChild(svgText(cx, cy + 2, score === null ? '—' : score, { class: 'ring__score', 'text-anchor': 'middle' }));
-    g.appendChild(svgText(cx, cy + 18, score === null ? 'no data' : 'of ' + total, { class: 'ring__of', 'text-anchor': 'middle' }));
+    // "83" over "of 12" read as an impossible fraction (the 83 is a percentage,
+    // the 12 a device count). The score carries its own unit now, and the
+    // line under it says what the denominator is made of.
+    g.appendChild(svgText(cx, cy + 2, score === null ? '—' : score + '%', { class: 'ring__score', 'text-anchor': 'middle' }));
+    g.appendChild(svgText(cx, cy + 18, score === null ? 'no data' : total + ' ' + plural(total, opts.unit || 'item'),
+                          { class: 'ring__of', 'text-anchor': 'middle' }));
 
     const legend = el('div', { class: 'ring__legend' }, ['ok', 'finding', 'unknown'].map((s) =>
       el('span', { class: 'ring__key' }, [
         el('i', { class: 'swatch', style: 'background:' + STATE_COLOR[s] }),
         String(counts[s]) + ' ' + s,
       ])));
-    return el('div', { class: 'ringcard' }, [
+    const card = el(opts.tab ? 'button' : 'div', { class: 'ringcard', type: opts.tab ? 'button' : null,
+                                                    title: opts.tab ? 'Open the ' + label + ' panel' : null }, [
       g, el('div', { class: 'ringcard__label', text: label }),
       el('div', { class: 'ringcard__sub', text: sub }), legend,
     ]);
+    if (opts.tab) card.addEventListener('click', () => showTab(opts.tab));
+    return card;
   }
 
   function tile(value, label, opts) {
     opts = opts || {};
-    return el('div', { class: 'tile' + (opts.cls ? ' ' + opts.cls : ''), title: opts.title || null }, [
+    const t = el(opts.tab ? 'button' : 'div', {
+      class: 'tile' + (opts.cls ? ' ' + opts.cls : '') + (opts.tab ? ' tile--link' : ''),
+      type: opts.tab ? 'button' : null, title: opts.title || null,
+    }, [
       el('div', { class: 'tile__value', text: value }),
       el('div', { class: 'tile__label', text: label }),
       opts.foot ? el('div', { class: 'tile__foot', text: opts.foot }) : null,
       opts.child || null,
     ]);
+    if (opts.tab) t.addEventListener('click', () => showTab(opts.tab));
+    return t;
   }
 
   /* Severity bar: one thin stacked bar, severity colours, direct-labelled. */
@@ -318,10 +539,12 @@
   async function loadOverview() {
     const body = document.getElementById('overview-body');
     try {
-      const [summary, host, identity, devices, sensors] = await Promise.all([
-        getJSON('/api/summary'), getJSON('/api/host'), getJSON('/api/identity'),
-        getJSON('/api/devices'), getJSON('/api/sensors'),
+      const raw = await Promise.all([
+        getRaw('/api/summary'), getRaw('/api/host'), getRaw('/api/identity'),
+        getRaw('/api/devices'), getRaw('/api/sensors'),
       ]);
+      if (unchanged('overview', raw.map((r) => r.text).join('\u0000'), body.firstChild)) return;
+      const [summary, host, identity, devices, sensors] = raw.map((r) => r.json);
       for (const d of devices.devices) PNMA.learnName(d.hostname);
       for (const s of sensors.sensors) PNMA.learnName(s.hostname);
 
@@ -330,47 +553,74 @@
       const openPorts = devices.devices.reduce((a, d) => a + (d.open_ports || []).length, 0);
       const risky = devices.devices.reduce((a, d) => a + (d.open_ports || []).filter((p) => p.risk && p.risk !== 'none').length, 0);
 
+      const onlineN = devices.devices.filter((d) => d.online).length;
       const rings = el('div', { class: 'rings' }, [
-        ring('Network', net, devices.devices.length + ' ' + plural(devices.devices.length, 'device')),
+        ring('Network', net, onlineN + ' online now', { unit: 'device', tab: 'network' }),
         ring('Host', { ok: hs.ok, finding: hs.finding, unknown: hs.unknown },
-             hs.elevated ? 'collected elevated' : hs.blocked_by_privilege + ' blocked by privilege'),
+             hs.elevated ? 'collected elevated' : hs.blocked_by_privilege + ' blocked by privilege', { unit: 'check', tab: 'host' }),
         ring('Identity', { ok: is.ok, finding: is.finding, unknown: is.unknown },
-             is.accounts ? is.accounts + ' ' + plural(is.accounts, 'account') + ', ' + is.stale + ' stale' : 'no accounts registered'),
+             is.accounts ? is.accounts + ' ' + plural(is.accounts, 'account') + ', ' + is.stale + ' stale' : 'no accounts registered',
+             { unit: 'control', tab: 'identity' }),
       ]);
 
       const alerts = summary.alerts;
       const tiles = el('div', { class: 'tiles' }, [
-        tile(devices.devices.filter((d) => d.online).length + ' / ' + summary.devices.total, 'devices online',
-             { foot: summary.devices.untrusted_online + ' untrusted online', cls: summary.devices.untrusted_online ? 'tile--warn' : '' }),
+        tile(onlineN + ' / ' + summary.devices.total, 'devices online',
+             { foot: summary.devices.untrusted_online + ' untrusted online', cls: summary.devices.untrusted_online ? 'tile--warn' : '', tab: 'network' }),
         tile(alerts.open, plural(alerts.open, 'open alert'), { child: severityBar(alerts.by_severity || {}),
-             cls: (alerts.by_severity || {}).critical || (alerts.by_severity || {}).high ? 'tile--bad' : '' }),
-        tile(openPorts, plural(openPorts, 'open port'), { foot: risky ? risky + ' flagged risky' : 'none flagged risky', cls: risky ? 'tile--warn' : '' }),
-        tile(fmtPct(summary.availability_24h_pct), 'reachable, 24h', { foot: summary.availability_24h_pct === null ? 'no samples yet' : 'across all devices' }),
-        tile(fmtMs(summary.latency_1h.avg_ms), 'avg round-trip, 1h', { foot: summary.latency_1h.samples + ' samples, max ' + fmtMs(summary.latency_1h.max_ms) }),
-        tile(hs.unknown + is.unknown + net.unknown, 'unmeasured controls', { foot: 'each one is a point you can win back', cls: 'tile--unknown' }),
+             cls: (alerts.by_severity || {}).critical || (alerts.by_severity || {}).high ? 'tile--bad' : '', tab: 'alerts' }),
+        tile(openPorts, plural(openPorts, 'open port'), { foot: risky ? risky + ' flagged risky' : 'none flagged risky', cls: risky ? 'tile--warn' : '', tab: 'network' }),
+        tile(fmtPct(summary.availability_24h_pct), 'reachable, 24h', { foot: summary.availability_24h_pct === null ? 'no samples yet' : 'across all devices', tab: 'network' }),
+        tile(fmtMs(summary.latency_1h.avg_ms), 'avg round-trip, 1h', { foot: summary.latency_1h.samples + ' samples, max ' + fmtMs(summary.latency_1h.max_ms), tab: 'network' }),
+        tile(hs.unknown + is.unknown + net.unknown, 'unmeasured controls', { foot: 'each one is a point you can win back', cls: 'tile--unknown', tab: 'host' }),
       ]);
 
       // Gaps to close: the gamification loop. Sorted so the cheapest wins
       // come first -- attesting an identity control is a tap, elevating the
       // collector is a restart, trusting a device is a decision.
       const gaps = [];
-      for (const acc of identity.accounts) for (const c of acc.controls) if (c.state !== 'ok')
-        gaps.push({ tab: 'identity', text: acc.label + ': ' + c.title, why: c.reason || 'finding', state: c.state });
+      // One row per account, not one per control: seven "Everyday banking:
+      // <control> -- never attested" rows in a row is a wall, and every one
+      // of them is the same tap on the same panel. A single finding on an
+      // account still gets its own row, because a finding is a different
+      // kind of thing from "not looked at yet" and deserves its own line.
+      for (const acc of identity.accounts) {
+        const findings = acc.controls.filter((c) => c.state === 'finding');
+        const unknown = acc.controls.filter((c) => c.state === 'unknown');
+        for (const c of findings)
+          gaps.push({ tab: 'identity', anchor: acc.account_id + ':' + c.control, text: acc.label + ': ' + c.title,
+                      why: c.reason || 'finding', state: 'finding' });
+        if (unknown.length) {
+          const stale = unknown.filter((c) => c.stale).length;
+          gaps.push({ tab: 'identity', anchor: acc.account_id + ':' + unknown[0].control,
+                      text: acc.label + ': ' + unknown.length + ' ' + plural(unknown.length, 'control') + ' to attest',
+                      why: stale ? stale + ' stale, ' + (unknown.length - stale) + ' never attested' : 'never attested', state: 'unknown' });
+        }
+      }
       for (const d of devices.devices) if (!d.trusted && Date.now() / 1000 - d.last_seen < 86400)
-        gaps.push({ tab: 'network', text: 'Decide trust for ' + (d.label || d.hostname || d.ip || d.mac), why: 'untrusted and seen today', state: 'finding' });
+        gaps.push({ tab: 'network', anchor: 'device:' + d.device_id, text: 'Decide trust for ' + (d.label || d.hostname || d.ip || d.mac), why: 'untrusted and seen today', state: 'finding' });
       for (const f of host.facts) if (f.state !== 'ok')
-        gaps.push({ tab: 'host', text: f.title, why: f.reason || (f.state === 'unknown' ? 'could not run' : 'finding'), state: f.state });
+        gaps.push({ tab: 'host', anchor: 'fact:' + f.fact_key, text: f.title, why: f.reason || (f.state === 'unknown' ? 'could not run' : 'finding'), state: f.state });
+      const SHOW = 8;
+      const list = el('ul', { class: 'gaps__list' }, gaps.map((g, i) => {
+        const li = el('li', { class: 'gap gap--' + g.state, hidden: i >= SHOW }, [
+          PNMA.stateChip(g.state), el('span', { class: 'gap__text', text: g.text }),
+          el('span', { class: 'gap__why', text: g.why }),
+        ]);
+        li.addEventListener('click', () => showTab(g.tab, g.anchor));
+        return li;
+      }));
+      let more = null;
+      if (gaps.length > SHOW) {
+        more = el('button', { class: 'btn gaps__more', type: 'button', text: 'Show all ' + gaps.length });
+        more.addEventListener('click', () => {
+          list.querySelectorAll('[hidden]').forEach((li) => { li.hidden = false; });
+          more.remove();
+        });
+      }
       const gapList = el('div', { class: 'gaps' }, [
         el('h3', { class: 'gaps__title', text: gaps.length ? gaps.length + ' ' + plural(gaps.length, 'gap') + ' to close' : 'No gaps. Every control measured and passing.' }),
-        el('ul', { class: 'gaps__list' }, gaps.slice(0, 12).map((g) => {
-          const li = el('li', { class: 'gap gap--' + g.state }, [
-            PNMA.stateChip(g.state), el('span', { class: 'gap__text', text: g.text }),
-            el('span', { class: 'gap__why', text: g.why }),
-          ]);
-          li.addEventListener('click', () => showTab(g.tab));
-          return li;
-        })),
-        gaps.length > 12 ? el('p', { class: 'section__note', text: 'and ' + (gaps.length - 12) + ' more in their panels' }) : null,
+        list, more,
       ]);
 
       clear(body);
@@ -401,32 +651,69 @@
       ]));
       return;
     }
-    const W = 640, H = 480, cx = W / 2, cy = H / 2;
     const gw = devices.find((d) => d.device_class === 'gateway' || d.device_class === 'router') ||
                devices.reduce((a, d) => (d.open_ports || []).length > (a.open_ports || []).length ? d : a, devices[0]);
     const others = devices.filter((d) => d !== gw);
-    const R = Math.min(W, H) / 2 - 70;
+
+    // Single ring is legible up to about eight spokes -- past that, the arc
+    // length per device shrinks faster than the labels below each node do,
+    // and names start overlapping their neighbours' before the ring is even
+    // half full. Two concentric rings roughly double how many devices fit
+    // before that happens, at the cost of a taller canvas; below the
+    // threshold the outer ring is simply everyone, same as before.
+    const TWO_RING_AT = 9;
+    const twoRings = others.length >= TWO_RING_AT;
+    const W = 640;
+    // Extra headroom per ring "row" so labels on a crowded outer ring have
+    // somewhere to go without being clipped by the viewBox.
+    const H = twoRings ? 560 : 480;
+    const cx = W / 2, cy = H / 2;
+    const Router = Math.min(W, H) / 2 - 76;
+    const Rinner = Router * 0.56;
+
+    // Interleaved, not split into two contiguous halves: alternating
+    // assignment spreads related devices (adjacent in the API's own
+    // ordering, usually by recency) across both rings instead of bunching
+    // them on one, which is what made a full inner ring and a nearly-empty
+    // outer one possible before.
+    const outer = twoRings ? others.filter((_, i) => i % 2 === 0) : others;
+    const inner = twoRings ? others.filter((_, i) => i % 2 === 1) : [];
+
     const root = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'netmap', role: 'img' }, [
       title('Network map: ' + devices.length + ' devices'),
     ]);
-    // Orbit ring, hairline, one shade off the surface.
-    root.appendChild(svg('circle', { cx, cy, r: R, class: 'netmap__orbit' }));
+    // Orbit ring(s), hairline, one shade off the surface.
+    root.appendChild(svg('circle', { cx, cy, r: Router, class: 'netmap__orbit' }));
+    if (twoRings) root.appendChild(svg('circle', { cx, cy, r: Rinner, class: 'netmap__orbit' }));
 
     const now = Date.now() / 1000;
-    others.forEach((d, i) => {
-      const a = (i / others.length) * 2 * Math.PI - Math.PI / 2;
-      const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
-      const online = now - d.last_seen < 900;
-      root.appendChild(svg('line', {
-        x1: cx, y1: cy, x2: x, y2: y,
-        class: 'netmap__edge' + (online ? '' : ' netmap__edge--dim'),
-      }));
-      root.appendChild(node(d, x, y, online, false));
-    });
+    function place(list, R, angleOffset) {
+      list.forEach((d, i) => {
+        const a = (i / list.length) * 2 * Math.PI - Math.PI / 2 + angleOffset;
+        const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
+        const online = now - d.last_seen < 900;
+        root.appendChild(svg('line', {
+          x1: cx, y1: cy, x2: x, y2: y,
+          class: 'netmap__edge' + (online ? '' : ' netmap__edge--dim'),
+        }));
+        root.appendChild(node(d, x, y, online, false));
+      });
+    }
+    // The inner ring is rotated a half-step relative to the outer one so a
+    // spoke on one ring falls in the gap between two spokes on the other,
+    // rather than lining up behind them from the gateway's point of view.
+    place(outer, Router, 0);
+    if (inner.length) place(inner, Rinner, Math.PI / outer.length);
+
     root.appendChild(node(gw, cx, cy, now - gw.last_seen < 900, true));
     body.appendChild(root);
     body.appendChild(el('div', { class: 'netmap__legend' }, [
-      key('ring: trusted', 'var(--accent)'), key('ring: untrusted', 'var(--warn)'),
+      // Trust reuses the ok/finding tokens rather than accent/warn: those two
+      // are the only vocabulary this dashboard has for "this passed" versus
+      // "this needs a decision", and a third colour pairing for the same
+      // idea on one panel is exactly the "parallel colours" style.css's own
+      // token comment warns against.
+      key('ring: trusted', 'var(--ok)'), key('ring: untrusted', 'var(--finding)'),
       key('fill: online', 'var(--bg-inset)'), key('badge: open ports', 'var(--fg-muted)'),
       el('span', { text: 'dashed edge: not seen in 15 min' }),
     ]));
@@ -445,7 +732,7 @@
       title(name + ' — ' + (d.ip || 'no ip') + ' — ' + (d.vendor || 'vendor unknown') +
             ' — ' + ports + ' open ' + plural(ports, 'port') + (alerts ? ' — ' + alerts + ' open alerts' : '')),
       svg('circle', { cx: x, cy: y, r: r + 6, class: 'netnode__halo' + (alerts ? ' netnode__halo--alert' : '') }),
-      svg('circle', { cx: x, cy: y, r, class: 'netnode__body', stroke: d.trusted ? 'var(--accent)' : 'var(--warn)' }),
+      svg('circle', { cx: x, cy: y, r, class: 'netnode__body', stroke: d.trusted ? 'var(--ok)' : 'var(--finding)' }),
       svgText(x, y + 5, isGw ? '⌂' : glyphFor(d.device_class), { class: 'netnode__glyph', 'text-anchor': 'middle' }),
       svgText(x, y + r + 16, truncate(name, 16), { class: 'netnode__name', 'text-anchor': 'middle' }),
       svgText(x, y + r + 29, d.ip ? d.ip : (d.mac_type === 'local' ? 'randomised MAC' : ''), { class: 'netnode__addr', 'text-anchor': 'middle' }),
@@ -471,8 +758,11 @@
 
   async function loadMap() {
     const body = document.getElementById('netmap-body');
+    const statsBody = document.getElementById('netstats-body');
     try {
-      const payload = await getJSON('/api/devices');
+      const raw = await getRaw('/api/devices');
+      if (unchanged('map', raw.text, body.firstChild && statsBody.firstChild)) return;
+      const payload = raw.json;
       mapDevices = payload.devices;
       for (const d of mapDevices) PNMA.learnName(d.hostname);
       renderMap(mapDevices);
@@ -484,13 +774,34 @@
 
   /* ---------------------------------------------------------- device sheet */
 
+  // Guards the close animation's timer against a re-open that lands inside
+  // it: tapping one device, then a second before the first sheet finished
+  // closing, would otherwise let the first close's stale timeout fire *after*
+  // the second sheet has opened and hide the wrong content.
+  let sheetCloseTimer = null;
+
   async function openSheet(deviceId) {
     const sheet = document.getElementById('device-sheet');
+    clearTimeout(sheetCloseTimer);
     sheet.hidden = false;
     clear(sheet);
     const card = el('div', { class: 'sheet__card' }, [el('div', { class: 'placeholder', text: 'Loading device…' })]);
     sheet.appendChild(card);
-    const close = () => { sheet.hidden = true; clear(sheet); };
+    // Same two-frame trick as the token gate: let `hidden` removal paint
+    // once at the closed position before adding the class that transitions
+    // it to open, or the browser has nothing to animate from.
+    requestAnimationFrame(() => requestAnimationFrame(() => sheet.classList.add('is-open')));
+    // Play the close transition out instead of just vanishing, but don't
+    // block the actual close on it -- a `transitionend` listener here would
+    // never fire at all for a reduced-motion visitor (the transition is
+    // `none`), which would leave the sheet permanently un-closeable for
+    // exactly the audience most likely to have that setting on for a
+    // reason. A timer that matches the CSS duration, capped, is honest about
+    // being an approximation rather than pretending to synchronise with it.
+    const close = () => {
+      sheet.classList.remove('is-open');
+      sheetCloseTimer = setTimeout(() => { sheet.hidden = true; clear(sheet); }, 180);
+    };
     sheet.addEventListener('click', (ev) => { if (ev.target === sheet) close(); });
     try {
       const d = await getJSON('/api/devices/' + encodeURIComponent(deviceId));
@@ -620,7 +931,9 @@
   async function loadActivity() {
     const body = document.getElementById('activity-body');
     try {
-      const payload = await getJSON('/api/timeline?hours=24');
+      const raw = await getRaw('/api/timeline?hours=24');
+      if (unchanged('activity', raw.text, body.firstChild)) return;
+      const payload = raw.json;
       const events = payload.events || [];
       clear(body);
       if (!events.length) {
@@ -661,15 +974,20 @@
         }
       });
       body.appendChild(root);
-      const failed = events.filter((e) => e.error).length;
+      // Same split as the tiles above: a run the scope guard refused is the
+      // guard working, not the collector failing, and counting it under
+      // "failed" here while the tiles said "0 failed" contradicted the page.
+      const isRefused = (e) => /refus|denied|scope/i.test(e.error || '');
+      const failed = events.filter((e) => e.error && !isRefused(e)).length;
+      const refused = events.filter((e) => e.error && isRefused(e)).length;
       body.appendChild(el('div', { class: 'netmap__legend' }, [
         el('span', { text: events.length + ' runs' }),
         el('span', {}, [el('i', { class: 'swatch', style: 'background:var(--finding)' }), failed + ' failed']),
-        el('span', {}, [el('i', { class: 'swatch swatch--hatch' }), 'refused by scope guard']),
+        el('span', {}, [el('i', { class: 'swatch swatch--hatch' }), refused + ' refused by scope guard']),
         el('span', { text: 'width = duration' }),
       ]));
       const lastErr = events.find((e) => e.error);
-      if (lastErr) body.appendChild(el('p', { class: 'section__note', text: 'Most recent failure: ' + hhmm(lastErr.ts) + ' ' + (KIND_LABEL[lastErr.kind] || lastErr.kind) + ' — ' + lastErr.error }));
+      if (lastErr) body.appendChild(el('p', { class: 'section__note', text: 'Most recent ' + (isRefused(lastErr) ? 'refusal' : 'failure') + ': ' + hhmm(lastErr.ts) + ' ' + (KIND_LABEL[lastErr.kind] || lastErr.kind) + ' — ' + lastErr.error }));
     } catch (err) {
       fail(body, 'Activity', err);
     }
@@ -680,7 +998,9 @@
   async function loadAttack() {
     const body = document.getElementById('attack-body');
     try {
-      const payload = await getJSON('/api/attack');
+      const raw = await getRaw('/api/attack');
+      if (unchanged('attack', raw.text, body.firstChild)) return;
+      const payload = raw.json;
       clear(body);
       const bySev = {};
       for (const t of payload.techniques || []) {
@@ -696,10 +1016,17 @@
         }
         for (const id of tac.techniques) {
           const t = bySev[id] || {};
-          col.appendChild(el('div', {
-            class: 'matrix__cell', style: t.severity ? 'border-left-color:' + SEV_COLOR[t.severity] : null,
-            title: (t.name || id) + (t.count ? ' — ' + t.count + ' open ' + plural(t.count, 'alert') : ''),
-          }, [el('span', { class: 'matrix__id', text: id }), el('span', { class: 'matrix__name', text: t.name || '' })]));
+          const covered = !!t.count;
+          const cell = el(covered ? 'button' : 'div', {
+            class: 'matrix__cell' + (covered ? ' matrix__cell--live' : ''),
+            type: covered ? 'button' : null,
+            style: t.severity ? 'border-left-color:' + SEV_COLOR[t.severity] : null,
+            title: (t.name || id) + (covered ? ' — ' + t.count + ' open ' + plural(t.count, 'alert') + '. Click to filter the queue to this technique.' : ' — no open alert maps here'),
+          }, [el('span', { class: 'matrix__id', text: id }), el('span', { class: 'matrix__name', text: t.name || '' })]);
+          if (covered && window.PNMA.filterAlertsByTechnique) {
+            cell.addEventListener('click', () => window.PNMA.filterAlertsByTechnique(id));
+          }
+          col.appendChild(cell);
         }
         return col;
       }));
@@ -740,7 +1067,9 @@
   async function loadIdentity() {
     const body = document.getElementById('identity-body');
     try {
-      const payload = await getJSON('/api/identity');
+      const raw = await getRaw('/api/identity');
+      if (unchanged('identity', raw.text, body.firstChild)) return;
+      const payload = raw.json;
       clear(body);
       const s = payload.summary;
       if (!payload.accounts.length) {
@@ -751,8 +1080,16 @@
         ]));
         return;
       }
+      // The ring for this domain already sits on the overview; repeating it
+      // here said nothing new. What this panel can add is the two numbers
+      // that tell the reader what to do next.
+      const total = s.ok + s.finding + s.unknown;
       body.appendChild(el('div', { class: 'idsummary' }, [
-        ring('Identity', { ok: s.ok, finding: s.finding, unknown: s.unknown }, s.accounts + ' ' + plural(s.accounts, 'account')),
+        el('div', { class: 'idsummary__counts' }, ['ok', 'finding', 'unknown'].map((st) => {
+          const chip = PNMA.stateChip(st);
+          chip.appendChild(el('span', { text: ' ' + s[st] }));
+          return chip;
+        }).concat([el('span', { class: 'idsummary__of', text: 'of ' + total + ' ' + plural(total, 'control') + ' across ' + s.accounts + ' ' + plural(s.accounts, 'account') })])),
         el('div', { class: 'idsummary__text' }, [
           el('p', {}, [el('strong', { text: s.stale + ' stale' }), ' ' + plural(s.stale, 'attestation') + ' rotted back to unknown. ',
                        el('strong', { text: s.never + ' never attested' }), '.']),
@@ -772,7 +1109,7 @@
           })),
         ]);
         const rows = el('div', { class: 'idctl' }, acc.controls.map((c) => controlRow(acc, c)));
-        body.appendChild(el('div', { class: 'idacc' }, [head, rows]));
+        body.appendChild(el('div', { class: 'idacc', 'data-anchor': 'account:' + acc.account_id }, [head, rows]));
       }
     } catch (err) {
       fail(body, 'Identity posture', err);
@@ -780,7 +1117,7 @@
   }
 
   function controlRow(acc, c) {
-    const row = el('div', { class: 'idctl__row idctl__row--' + c.state }, [
+    const row = el('div', { class: 'idctl__row idctl__row--' + c.state, 'data-anchor': acc.account_id + ':' + c.control }, [
       PNMA.stateChip(c.state),
       el('div', { class: 'idctl__text' }, [
         el('div', { class: 'idctl__title', text: c.title }),
@@ -814,7 +1151,27 @@
   async function loadAgent() {
     const body = document.getElementById('agent-body');
     try {
-      const [audit, det, sensors] = await Promise.all([getJSON('/api/audit?hours=24'), getJSON('/api/detections'), getJSON('/api/sensors')]);
+      // The live/idle pill is read every tick regardless of whether the rest
+      // of this panel changed -- it is the one piece of this page with a
+      // freshness clock of its own (10 minutes), independent of whatever the
+      // audit/detections/sensors payloads say.
+      const pill = document.getElementById('mode-pill');
+      if (pill) {
+        const runs = (await getJSON('/api/timeline?hours=2')).events || [];
+        const ls = runs.length ? Math.max(...runs.map((e) => e.ts)) : 0;
+        const fresh = ls && Date.now() / 1000 - ls < 600;
+        pill.textContent = fresh ? '● live' : '○ idle' + (ls ? ' · ' + relativeTime(ls) : '');
+        pill.title = fresh ? 'The collector ran within the last 10 minutes.' : 'No collection run in the last 10 minutes. Is pnma collect running?';
+        pill.className = 'tool tool--mode ' + (fresh ? 'tool--live' : 'tool--idle');
+      }
+
+      const raw = await Promise.all([getRaw('/api/audit?hours=24'), getRaw('/api/detections'), getRaw('/api/sensors')]);
+      // The 11 rule disclosures below are the panel's own <details> elements
+      // -- exactly what a poll-driven full rebuild must not close out from
+      // under a reader partway through one. Skip the rebuild when nothing
+      // in the underlying data actually changed.
+      if (unchanged('agent', raw.map((r) => r.text).join('\u0000'), body.firstChild)) return;
+      const [audit, det, sensors] = raw.map((r) => r.json);
       for (const s of sensors.sensors) PNMA.learnName(s.hostname);
       clear(body);
       const a = audit.authorisation || {};
@@ -857,18 +1214,6 @@
           el('div', {}, [el('div', { class: 'check__title', text: s.kind + ' · ' + s.hostname + ' · v' + s.version }),
                          el('div', { class: 'check__detail', text: 'last seen ' + relativeTime(s.last_seen) })]),
         ]))));
-      // Liveness comes from the most recent collection run, not the sensor
-      // row: the sensor heartbeat is written at startup, and a collector that
-      // has been running for an hour would otherwise read as idle.
-      const pill = document.getElementById('mode-pill');
-      if (pill) {
-        const runs = (await getJSON('/api/timeline?hours=2')).events || [];
-        const ls = runs.length ? Math.max(...runs.map((e) => e.ts)) : 0;
-        const fresh = ls && Date.now() / 1000 - ls < 600;
-        pill.textContent = fresh ? '● live' : '○ idle' + (ls ? ' · ' + relativeTime(ls) : '');
-        pill.title = fresh ? 'The collector ran within the last 10 minutes.' : 'No collection run in the last 10 minutes. Is pnma collect running?';
-        pill.className = 'tool tool--mode ' + (fresh ? 'tool--live' : 'tool--idle');
-      }
     } catch (err) {
       fail(body, 'Agent report', err);
     }
@@ -877,9 +1222,14 @@
   /* =================================================================== boot */
 
   PNMA.showTab = showTab;
+  PNMA.openDeviceSheet = openSheet;
   document.addEventListener('DOMContentLoaded', () => {
     buildTabs();
     buildTools();
+    PNMA.namesReady = Promise.all([getJSON('/api/devices'), getJSON('/api/sensors')]).then(([d, s]) => {
+      for (const x of d.devices || []) PNMA.learnName(x.hostname);
+      for (const x of s.sensors || []) PNMA.learnName(x.hostname);
+    }).catch(() => { /* the gate or a dead API; the panels report that themselves */ });
     loadOverview(); loadMap(); loadActivity(); loadAttack(); loadIdentity(); loadAgent();
     setInterval(loadOverview, 60000);
     setInterval(loadMap, 60000);

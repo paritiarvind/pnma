@@ -35,18 +35,22 @@
 </head>
 <body>
 
-<header class="masthead">
-  <div class="masthead__inner">
-    <div class="masthead__brand">
+<div class="shell">
+  <!-- Sidebar on a monitor-width screen; collapses back to a top bar plus
+       the existing fixed bottom tab bar under 768px (see style.css) -- a
+       sidebar has nowhere to go on a phone, so the phone layout is
+       untouched by this section. -->
+  <aside class="sidebar">
+    <div class="sidebar__brand">
       <h1 class="masthead__title">PNMA</h1>
       <span class="masthead__sub">Personal Network Monitoring Agent</span>
     </div>
+    <nav class="tabs" id="tabs" aria-label="Views"></nav>
     <div class="masthead__tools" id="masthead-tools"></div>
-  </div>
-  <nav class="tabs" id="tabs" aria-label="Views"></nav>
-</header>
+  </aside>
 
-<main class="page">
+  <div class="shell__main">
+    <main class="page">
 
   <!-- ============================================================ overview -->
 
@@ -55,16 +59,18 @@
       <h2 class="section__title">Posture</h2>
       <p class="section__note">
         Three domains, one rule: a control that was not measured counts
-        against you. The rings show ok / finding / <em>unknown</em> as
-        proportions of everything the agent is supposed to know.
+        against you. Every ring, tile and gap here is a link into the panel
+        that owns it.
       </p>
     </div>
     <div id="overview-body">
-      <div class="placeholder">Loading overview&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading overview&hellip;</div>
     </div>
   </section>
 
-  <section class="section" id="netmap" data-tab="overview">
+  <!-- ============================================================= network -->
+
+  <section class="section" id="netmap" data-tab="network">
     <div class="section__head">
       <h2 class="section__title">Network map</h2>
       <p class="section__note">
@@ -74,25 +80,9 @@
       </p>
     </div>
     <div id="netmap-body">
-      <div class="placeholder">Loading map&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading map&hellip;</div>
     </div>
   </section>
-
-  <section class="section" id="activity" data-tab="overview">
-    <div class="section__head">
-      <h2 class="section__title">What the agent did</h2>
-      <p class="section__note">
-        Every collection run in the last 24 hours, by kind. A failed or
-        refused run is drawn, not dropped: the gaps in this chart are the
-        gaps in everything above it.
-      </p>
-    </div>
-    <div id="activity-body">
-      <div class="placeholder">Loading activity&hellip;</div>
-    </div>
-  </section>
-
-  <!-- ============================================================= network -->
 
   <section class="section" id="netstats" data-tab="network">
     <div class="section__head">
@@ -105,7 +95,7 @@
       </p>
     </div>
     <div id="netstats-body">
-      <div class="placeholder">Loading&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading&hellip;</div>
     </div>
   </section>
 
@@ -118,7 +108,7 @@
       </p>
     </div>
     <div id="devices-body">
-      <div class="placeholder">Loading devices&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading devices&hellip;</div>
     </div>
   </section>
 
@@ -132,7 +122,7 @@
       </p>
     </div>
     <div id="availability-body">
-      <div class="placeholder">Loading availability&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading availability&hellip;</div>
     </div>
   </section>
 
@@ -147,21 +137,7 @@
       </p>
     </div>
     <div id="host-posture-body">
-      <div class="placeholder">Loading host posture&hellip;</div>
-    </div>
-  </section>
-
-  <section class="section" id="attack" data-tab="host">
-    <div class="section__head">
-      <h2 class="section__title">ATT&amp;CK coverage</h2>
-      <p class="section__note">
-        Which techniques the open alerts have evidence for, on the full
-        tactic list. The empty columns are the point: a coverage view that
-        only lists what it found tells you nothing about what it cannot see.
-      </p>
-    </div>
-    <div id="attack-body">
-      <div class="placeholder">Loading coverage&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading host posture&hellip;</div>
     </div>
   </section>
 
@@ -178,7 +154,22 @@
       </p>
     </div>
     <div id="alerts-body">
-      <div class="placeholder">Loading alerts&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading alerts&hellip;</div>
+    </div>
+  </section>
+
+
+  <section class="section" id="attack" data-tab="alerts">
+    <div class="section__head">
+      <h2 class="section__title">ATT&amp;CK coverage</h2>
+      <p class="section__note">
+        Which techniques the open alerts have evidence for, on the full
+        tactic list. The empty columns are the point: a coverage view that
+        only lists what it found tells you nothing about what it cannot see.
+      </p>
+    </div>
+    <div id="attack-body">
+      <div class="placeholder placeholder--loading">Loading coverage&hellip;</div>
     </div>
   </section>
 
@@ -195,7 +186,7 @@
       </p>
     </div>
     <div id="identity-body">
-      <div class="placeholder">Loading identity posture&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading identity posture&hellip;</div>
     </div>
   </section>
 
@@ -212,13 +203,31 @@
       </p>
     </div>
     <div id="agent-body">
-      <div class="placeholder">Loading agent report&hellip;</div>
+      <div class="placeholder placeholder--loading">Loading agent report&hellip;</div>
     </div>
   </section>
 
-</main>
+
+  <section class="section" id="activity" data-tab="agent">
+    <div class="section__head">
+      <h2 class="section__title">What the agent did</h2>
+      <p class="section__note">
+        Every collection run in the last 24 hours, by kind. A failed or
+        refused run is drawn, not dropped: the gaps in this chart are the
+        gaps in everything above it.
+      </p>
+    </div>
+    <div id="activity-body">
+      <div class="placeholder placeholder--loading">Loading activity&hellip;</div>
+    </div>
+  </section>
+
+    </main>
+  </div>
+</div>
 
 <div id="device-sheet" class="sheet" hidden></div>
+<div id="alert-sheet" class="sheet" hidden></div>
 <div id="token-gate" class="gate" hidden></div>
 
 <script src="/viz.js"></script>
