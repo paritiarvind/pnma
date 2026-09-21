@@ -1758,3 +1758,70 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
   .pb__chip { max-width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .pb { animation: none; } }
+
+/* ---- investigation log / event stream ------------------------------------
+ * One row per normalised event (pnma.events). Dense on purpose: an analyst
+ * scans time -> kind -> summary, and opens a row for the raw fields. Kind
+ * hues reuse the wayfinding palette; alert rows carry their severity on the
+ * left edge like the queue does, so the two read as the same object. */
+.evlog { margin-top: var(--s2); }
+.evlog__bar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--s2); }
+.evlog__chip {
+  font: inherit; font-size: 12px; display: inline-flex; align-items: baseline; gap: 6px; cursor: pointer;
+  background: var(--bg-raised); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px;
+  color: var(--fg-muted); transition: border-color 120ms ease, background-color 120ms ease;
+}
+.evlog__chip:hover { border-color: var(--line-strong); color: var(--fg); }
+.evlog__chip[aria-pressed="true"] { color: var(--fg); background: var(--bg-inset); border-color: var(--evk, var(--accent)); }
+.evlog__chip:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.evlog__chipcount { font-family: var(--mono); color: var(--fg-dim); }
+.evlog__chip--toggle { margin-left: auto; }
+.evlog__chip--observation { --evk: var(--nav-network); }
+.evlog__chip--scan, .evlog__chip--delivery { --evk: var(--nav-agent); }
+.evlog__chip--alert, .evlog__chip--alert_change { --evk: var(--nav-alerts); }
+.evlog__chip--availability { --evk: var(--nav-overview); }
+.evlog__chip--host_fact { --evk: var(--nav-host); }
+.evlog__chip--port, .evlog__chip--banner { --evk: var(--nav-identity); }
+
+.evlog__rows { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
+.evlog__row { border-top: 1px solid var(--line); border-left: 3px solid var(--evk, transparent); }
+.evlog__row:first-child { border-top: 0; }
+.evlog__row--observation { --evk: var(--nav-network); }
+.evlog__row--scan, .evlog__row--delivery { --evk: var(--nav-agent); }
+.evlog__row--alert, .evlog__row--alert_change { --evk: var(--nav-alerts); }
+.evlog__row--availability { --evk: var(--nav-overview); }
+.evlog__row--host_fact { --evk: var(--nav-host); }
+.evlog__row--port, .evlog__row--banner { --evk: var(--nav-identity); }
+.evlog__row--sev-critical { --evk: var(--sev-critical); }
+.evlog__row--sev-high { --evk: var(--sev-high); }
+.evlog__row--sev-medium { --evk: var(--sev-medium); }
+.evlog__row.is-agent .evlog__sum { color: var(--fg-muted); }
+.evlog__head {
+  display: grid; grid-template-columns: minmax(8.5ch, max-content) 6.5ch 11ch 1fr; gap: var(--s2); align-items: baseline;
+  padding: 5px 10px; cursor: pointer; font-size: 12.5px; line-height: 1.45; list-style: none;
+}
+.evlog__head::-webkit-details-marker { display: none; }
+.evlog__head:hover { background: var(--bg-raised); }
+.evlog__row[open] > .evlog__head { background: var(--bg-raised); }
+.evlog__time { font-family: var(--mono); color: var(--fg-dim); white-space: nowrap; }
+.evlog__kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--evk, var(--fg-muted)); font-weight: 600; }
+.evlog__src { font-family: var(--mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evlog__sum { color: var(--fg); overflow-wrap: anywhere; }
+.evlog__count { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--fg-dim); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+.evlog__detail { padding: var(--s1) 10px var(--s2); font-size: 12px; }
+.evlog__detail dd { overflow-wrap: anywhere; }
+.evlog__row > .btn { margin: 0 10px var(--s2); }
+.evlog__marker {
+  padding: 3px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+  color: var(--nav-alerts); background: color-mix(in srgb, var(--nav-alerts) 10%, transparent);
+  border-top: 1px dashed var(--nav-alerts); border-bottom: 1px dashed var(--nav-alerts);
+}
+.evlog__empty { margin: 0; padding: var(--s3); color: var(--fg-muted); font-size: 13px; }
+.evlog__scope, .evlog__note { font-size: 12px; }
+.evlog__note { color: var(--nav-identity); }
+@media (max-width: 640px) {
+  .evlog__head { grid-template-columns: max-content 1fr; }
+  .evlog__src { display: none; }
+  .evlog__sum { grid-column: 1 / -1; }
+  .evlog__chip--toggle { margin-left: 0; }
+}

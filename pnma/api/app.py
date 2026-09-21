@@ -305,6 +305,41 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
             ],
         }
 
+    # -- the log: one stream over every table (see pnma.events) ------------
+
+    @app.get("/api/events")
+    def api_events(
+        hours: float = 24,
+        device_id: str | None = None,
+        kinds: str | None = None,
+        q: str | None = None,
+        agent: bool = True,
+        since: float | None = None,
+        limit: int = 500,
+    ):
+        """SIEM-style log explorer. `kinds` is comma-separated (see events.KINDS);
+        `agent=false` hides rows PNMA's own probes produced; `since` (epoch)
+        overrides `hours` and is what the live cursor in the dashboard sends."""
+        from .. import events as ev
+
+        now = time.time()
+        lo = since if since is not None else now - hours * 3600
+        wanted = [k for k in (kinds or "").split(",") if k] or None
+        rows = ev.query_events(db, since=lo, until=now, device_id=device_id,
+                               kinds=wanted, q=q, include_agent=agent, limit=limit)
+        return {"events": rows, "kinds": list(ev.KINDS), "since": lo, "until": now}
+
+    @app.get("/api/alerts/{alert_id}/investigate")
+    def api_investigate(alert_id: int, before_h: float = 1, after_h: float = 1):
+        """Everything recorded around one alert: the analyst's evidence bundle."""
+        from .. import events as ev
+
+        bundle = ev.investigate(db, alert_id, before_s=int(before_h * 3600),
+                                after_s=int(after_h * 3600))
+        if bundle is None:
+            raise HTTPException(404, "no such alert")
+        return bundle
+
     @app.get("/api/timeline")
     def timeline(hours: int = 24):
         rows = db.query(

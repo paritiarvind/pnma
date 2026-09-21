@@ -767,6 +767,184 @@ function evidenceGrid(ev) {
   return rows.length ? el('dl', { class: 'kv kv--evidence' }, rows) : null;
 }
 
+/* ------------------------------------------------------ investigation log */
+
+/* One kind, one label. Load-bearing colours (severity) stay with alerts; the
+ * rest are wayfinding so a reader can skim "what kind of row is this". */
+const EVENT_KIND_LABEL = {
+  observation: 'seen', scan: 'agent', delivery: 'delivered', alert: 'alert',
+  alert_change: 'changed', availability: 'ping', host_fact: 'control', port: 'port', banner: 'banner',
+};
+
+function clockTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const hms = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return sameDay ? hms : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + hms;
+}
+
+/**
+ * A time-ordered log of normalised events (see pnma.events). Used by the
+ * alert drawer (the window around one alert) and the Logs tab (everything).
+ * Every string reaches the DOM through el(), so the privacy mask applies.
+ *
+ * opts: { markerTs, markerText, order: 'asc'|'desc', emptyText }
+ */
+function eventLog(events, opts) {
+  opts = opts || {};
+  const order = opts.order || 'asc';
+  const sortRows = (arr) => arr.slice().sort((a, b) => order === 'asc' ? a.ts - b.ts : b.ts - a.ts);
+  const rows = sortRows(events);
+  const wrap = el('div', { class: 'evlog' });
+  const state = { hideAgent: false, kinds: new Set() };
+  const bar = el('div', { class: 'evlog__bar' });
+  const list = el('div', { class: 'evlog__rows', role: 'list' });
+  wrap.appendChild(bar);
+  wrap.appendChild(list);
+
+  function buildBar() {
+    clear(bar);
+    const counts = {};
+    rows.forEach((e) => { counts[e.kind] = (counts[e.kind] || 0) + 1; });
+    Object.keys(counts).forEach((k) => {
+      const chip = el('button', { class: 'evlog__chip evlog__chip--' + k, type: 'button', 'aria-pressed': state.kinds.has(k) ? 'true' : 'false' }, [
+        el('span', { class: 'evlog__chipname', text: EVENT_KIND_LABEL[k] || k }),
+        el('span', { class: 'evlog__chipcount', text: String(counts[k]) }),
+      ]);
+      chip.addEventListener('click', () => {
+        if (state.kinds.has(k)) state.kinds.delete(k); else state.kinds.add(k);
+        chip.setAttribute('aria-pressed', state.kinds.has(k) ? 'true' : 'false');
+        render();
+      });
+      bar.appendChild(chip);
+    });
+    const agentRows = rows.filter((e) => e.agent_generated).length;
+    if (agentRows) {
+      const t = el('button', { class: 'evlog__chip evlog__chip--toggle', type: 'button', 'aria-pressed': state.hideAgent ? 'true' : 'false',
+        text: 'hide PNMA’s own probes (' + agentRows + ')',
+        title: 'Rows the agent caused itself: its scans answering, its pings, its deliveries. Hiding them leaves what the network did on its own.' });
+      t.addEventListener('click', () => { state.hideAgent = !state.hideAgent; t.setAttribute('aria-pressed', state.hideAgent ? 'true' : 'false'); render(); });
+      bar.appendChild(t);
+    }
+  }
+
+  function row(e) {
+    const sev = e.kind === 'alert' && e.detail ? e.detail.severity : null;
+    const r = el('details', { class: 'evlog__row evlog__row--' + e.kind + (e.agent_generated ? ' is-agent' : '') + (sev ? ' evlog__row--sev-' + sev : ''), role: 'listitem' });
+    const folded = (e.count || 1) > 1;
+    r.appendChild(el('summary', { class: 'evlog__head' }, [
+      el('span', { class: 'evlog__time', text: clockTime(e.ts), title: relativeTime(e.ts) || '' }),
+      el('span', { class: 'evlog__kind', text: EVENT_KIND_LABEL[e.kind] || e.kind }),
+      el('span', { class: 'evlog__src', text: e.source || '' }),
+      el('span', { class: 'evlog__sum' }, [
+        e.summary || '',
+        folded ? el('span', { class: 'evlog__count', text: '×' + e.count, title: 'identical rows from ' + clockTime(e.span_from) + ' to ' + clockTime(e.span_to) }) : null,
+      ]),
+    ]));
+    const kv = [];
+    if (folded) kv.push(['repeated', e.count + ' identical rows, ' + clockTime(e.span_from) + ' → ' + clockTime(e.span_to)]);
+    if (e.entity) kv.push(['entity', e.entity]);
+    if (e.device_id) kv.push(['device', deviceLabelFor(e.device_id) || e.device_id]);
+    kv.push(['recorded', new Date(e.ts * 1000).toLocaleString()]);
+    if (e.ref) kv.push(['row', e.ref]);
+    if (e.detail && typeof e.detail === 'object') {
+      Object.keys(e.detail).forEach((k) => {
+        if (k === 'count' || k === 'span_from' || k === 'span_to') return;
+        const v = e.detail[k];
+        if (v === null || v === undefined || v === '') return;
+        kv.push([k, typeof v === 'object' ? JSON.stringify(v) : String(v)]);
+      });
+    }
+    r.appendChild(el('dl', { class: 'kv evlog__detail' }, kv.map(([k, v]) => el('div', {}, [el('dt', { text: k }), el('dd', { text: v })]))));
+    if (e.kind === 'alert' && e.detail && e.detail.alert_id && window.PNMA.openAlert) {
+      const b = el('button', { class: 'btn', type: 'button', text: 'open this alert' });
+      b.addEventListener('click', () => window.PNMA.openAlert(e.detail.alert_id));
+      r.appendChild(b);
+    }
+    return r;
+  }
+
+  /* Consecutive agent rows that say the same thing (thirty identical "arp
+   * table read: 12 devices" ticks) fold into one row with a count and span.
+   * Only the agent's own repetition folds; anything the network did is
+   * shown as it happened. */
+  function fold(arr) {
+    const out = [];
+    arr.forEach((e) => {
+      const last = out[out.length - 1];
+      if (last && e.agent_generated && last.agent_generated && last.kind === e.kind && last.source === e.source && last.summary === e.summary) {
+        last.count = (last.count || 1) + 1;
+        last.span_from = Math.min(last.span_from, e.ts);
+        last.span_to = Math.max(last.span_to, e.ts);
+      } else {
+        out.push(Object.assign({}, e, { count: 1, span_from: e.ts, span_to: e.ts }));
+      }
+    });
+    return out;
+  }
+
+  function render() {
+    clear(list);
+    const shown = fold(rows.filter((e) => !(state.hideAgent && e.agent_generated) && (!state.kinds.size || state.kinds.has(e.kind))));
+    if (!shown.length) {
+      list.appendChild(el('p', { class: 'evlog__empty', text: rows.length ? 'Every row is filtered out.' : (opts.emptyText || 'Nothing recorded in this window.') }));
+      return;
+    }
+    let markerDone = opts.markerTs == null;
+    const marker = () => el('div', { class: 'evlog__marker', text: opts.markerText || 'alert raised' });
+    shown.forEach((e) => {
+      const after = order === 'asc' ? e.ts >= opts.markerTs : e.ts <= opts.markerTs;
+      if (!markerDone && after) { list.appendChild(marker()); markerDone = true; }
+      list.appendChild(row(e));
+    });
+    if (!markerDone) list.appendChild(marker());
+  }
+  buildBar();
+  render();
+  wrap.refresh = (next) => { rows.splice(0, rows.length, ...sortRows(next)); buildBar(); render(); };
+  return wrap;
+}
+
+/* The window around one alert, read from /api/alerts/{id}/investigate: every
+ * observation of its device (and any address its evidence names), every
+ * scan that touched it, its ping transitions, port changes, banners, the
+ * alert's own history, and the other alerts that fired alongside it. The
+ * alert's evidence is a snapshot; this is the record it was cut from. */
+async function enrichWithInvestigation(card, alert) {
+  const slot = card.querySelector('.alertdetail__investigate');
+  if (!slot) return;
+  try {
+    const resp = await fetch('/api/alerts/' + encodeURIComponent(alert.id) + '/investigate');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const b = await resp.json();
+    clear(slot);
+    const w = b.window || {};
+    const idents = b.identifiers || {};
+    const scope = [].concat(idents.ips || [], idents.macs || []);
+    slot.appendChild(el('p', { class: 'alert__desc evlog__scope' }, [
+      'Window ' + clockTime(w.since) + ' → ' + clockTime(w.until) + '. ',
+      scope.length ? 'Matched on ' + scope.join(', ') + '. ' : 'No device is attached to this alert, so only the agent’s own runs are shown. ',
+      b.truncated ? 'Capped at ' + b.events.length + ' rows; the Logs tab has the rest.' : '',
+    ]));
+    const total = b.events.length;
+    const own = b.events.filter((e) => e.agent_generated).length;
+    if (total && own === total) {
+      slot.appendChild(el('p', { class: 'alert__desc evlog__note', text: 'Everything in this window came from PNMA’s own probes -- nothing was seen passively. That is information: the device only spoke when asked.' }));
+    }
+    slot.appendChild(eventLog(b.events, {
+      markerTs: alert.first_seen, markerText: 'this alert was raised',
+      emptyText: 'Nothing else was recorded in this window. Either the device was quiet, or the sensor that would have seen it was not running -- the Agent tab shows coverage.',
+    }));
+    if ((b.related_alerts || []).length) {
+      slot.appendChild(el('p', { class: 'alert__desc', text: b.related_alerts.length + ' other ' + plural(b.related_alerts.length, 'alert') + ' on the same device in this window -- each is a row above and opens from there.' }));
+    }
+  } catch (err) {
+    clear(slot);
+    slot.appendChild(el('p', { class: 'alert__desc', text: 'Could not load the investigation log (' + err.message + ').' }));
+  }
+}
+
 /* The device the alert is about, read live from /api/devices/{id}: address,
  * hardware, class, trust, every open port, and what else is open on it. An
  * alert's own evidence is a snapshot from the moment the rule fired; this is
@@ -985,6 +1163,7 @@ function alertDetail(alert, onAction) {
   if (grid) tele.push(grid);
   if (alert.device_id) tele.push(el('div', { class: 'alertdetail__entity' }, [el('p', { class: 'alert__desc', text: 'Loading device record\u2026' })]));
   if (tele.length) card.appendChild(section('Telemetry', tele, 'alertdetail__sec--tele'));
+  card.appendChild(section('Investigation log', [el('div', { class: 'alertdetail__investigate' }, [el('p', { class: 'alert__desc', text: 'Loading the record around this alert\u2026' })])], 'alertdetail__sec--investigate'));
   if (parsed.groups.why.length) card.appendChild(section('Why it matters', paras(parsed.groups.why), 'alertdetail__sec--why'));
   const bm = [];
   if (parsed.groups.benign.length) bm.push(section('Could be harmless if…', paras(parsed.groups.benign), 'alertdetail__sec--benign'));
@@ -1087,6 +1266,7 @@ function openAlertSheet(alert, onAction) {
   });
   card.scrollTop = scrollTop;
   if (alert.device_id) enrichWithDevice(card, alert.device_id);
+  enrichWithInvestigation(card, alert);
   card.querySelector('[data-close]').addEventListener('click', closeAlertSheet);
   if (!sheet.dataset.wired) {
     sheet.dataset.wired = '1';
@@ -1787,7 +1967,7 @@ function loadAvailability() {
 
 window.PNMA = window.PNMA || {};
 window.PNMA.renderHostPosture = renderHostPosture;
-Object.assign(window.PNMA, { el, clear, plural, relativeTime, stateChip, severityChip,
+Object.assign(window.PNMA, { el, clear, plural, relativeTime, stateChip, severityChip, eventLog, clockTime,
                              loadAlerts, loadDevices, loadAvailability, loadHostPosture });
 // Exported for the same reason as the posture renderer: each panel can be
 // driven from a fixture during development without standing up the API.
