@@ -67,6 +67,12 @@ log = logging.getLogger(__name__)
 
 VERSION = "0.1.0"
 
+# Main-loop tick and the shortest gap between two event-driven detection
+# passes. A passive frame is judged within roughly a second of arriving; a
+# burst of frames (a device booting, a scan) is judged once per debounce.
+LOOP_TICK_S = 0.5
+DETECT_DEBOUNCE_S = 2.0
+
 # The guard is re-checked on this interval, not just at startup. Laptops
 # suspend at home and resume somewhere else; a startup-only check would happily
 # keep scanning after the network underneath it changed.
@@ -83,8 +89,12 @@ class Scheduler:
     exact moment the network state is least certain.
     """
 
-    def __init__(self):
+    def __init__(self, on_done=None):
         self._tasks: list[dict] = []
+        # Called with the task name after each run, success or failure. The
+        # daemon uses it to judge fresh telemetry as soon as a collector
+        # produced it instead of waiting for the detection tick.
+        self.on_done = on_done
 
     def every(self, interval_s: int, fn, name: str, jitter: float = 0.1) -> None:
         self._tasks.append(
@@ -107,6 +117,8 @@ class Scheduler:
                 task["fn"]()
             except Exception:  # noqa: BLE001 - one bad task must not stop the loop
                 log.exception("scheduled task %s failed", task["name"])
+            if self.on_done:
+                self.on_done(task["name"])
             spread = task["interval"] * task["jitter"]
             task["next"] = now + task["interval"] + random.uniform(-spread, spread)
 
@@ -127,8 +139,15 @@ class Collector:
         self.mode = "unknown"
         self.capture_status = "not started"
         self._stop = threading.Event()
-        self._scheduler = Scheduler()
+        self._scheduler = Scheduler(on_done=self._after_task)
         self.started_at = time.time()
+        # Event-driven detection. Collectors (and the passive thread) set this
+        # when they wrote something worth judging; the main loop drains it
+        # within DETECT_DEBOUNCE_S. The fixed detection_interval_s tick stays
+        # as the safety net, so nothing gets slower -- only faster.
+        self._detect_requested = threading.Event()
+        self._last_detection_ok = 0.0
+        self.event_driven_detections = 0
 
         # Persist network identity so detection rules can read it without
         # holding a reference to the config object.
@@ -268,6 +287,7 @@ class Collector:
                 self.sensor_id,
                 interface=self.config.collector.interface,
                 auditor=self.auditor,
+                on_observe=self.request_detection,
             )
             self.passive.start()
             self.mode = "full"
@@ -348,6 +368,33 @@ class Collector:
         }
 
     # -- detection + escalation ---------------------------------------------
+
+    # Tasks whose output changes what the rules would say. The rest (prune,
+    # guard recheck, KEV refresh, the detection tick itself) do not.
+    _DETECT_AFTER = frozenset({
+        "arp_table", "discovery", "ping", "port_scan", "host_posture",
+        "honeypot", "confirm_exposure", "maillog",
+    })
+
+    def _after_task(self, name: str) -> None:
+        if name in self._DETECT_AFTER:
+            self.request_detection()
+
+    def request_detection(self) -> None:
+        """Ask the main loop to run the rules soon. Safe from any thread."""
+        self._detect_requested.set()
+
+    def _drain_detection_request(self) -> None:
+        if not self._detect_requested.is_set():
+            return
+        if time.time() - self._last_detection_ok < DETECT_DEBOUNCE_S:
+            return  # a burst of frames is judged once, not once per frame
+        self._detect_requested.clear()
+        self.event_driven_detections += 1
+        try:
+            self._run_detections()
+        except Exception:  # noqa: BLE001 - same isolation as the scheduler
+            log.exception("event-driven detection pass failed")
 
     def _run_detections(self) -> None:
         findings = self.engine.run_all()
@@ -626,7 +673,8 @@ class Collector:
 
         while not self._stop.is_set():
             self._scheduler.run_due()
-            self._stop.wait(1.0)
+            self._drain_detection_request()
+            self._stop.wait(LOOP_TICK_S)
 
         self.shutdown()
         return 0

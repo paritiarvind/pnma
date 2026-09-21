@@ -1174,6 +1174,9 @@ input:focus-visible,
 .tool--mode { cursor: default; }
 .tool--live { color: var(--ok); border-color: var(--ok-line); }
 .tool--idle { color: var(--warn); }
+.tool--stream { cursor: help; }
+.tool--streaming { color: var(--nav-agent); border-color: color-mix(in srgb, var(--nav-agent) 45%, transparent); }
+.tool--polling { color: var(--fg-dim); }
 
 .tabs {
   max-width: 1100px; margin: 0 auto; padding: 0 var(--s3);

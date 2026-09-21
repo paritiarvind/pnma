@@ -145,12 +145,17 @@ class PassiveCollector:
         sensor_id: str,
         interface: str = "",
         auditor=None,  # pnma.audit.Auditor -- for probe-window correlation
+        on_observe=None,  # called (no args) after each frame is recorded
     ):
         self.db = db
         self.guard = guard
         self.sensor_id = sensor_id
         self.interface = interface or None
         self.auditor = auditor
+        # The daemon passes its detection-request hook here so a frame the
+        # network sent on its own (an ARP claim, a DHCP request) is judged
+        # within a second of arriving, not at the next detection tick.
+        self.on_observe = on_observe
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self.packets_seen = 0
@@ -299,6 +304,11 @@ class PassiveCollector:
                 "solicited_by_agent": solicited,
             },
         )
+        if self.on_observe:
+            try:
+                self.on_observe()
+            except Exception:  # noqa: BLE001 - the hook must never stop capture
+                log.exception("on_observe hook failed")
 
     def _handle_dhcp(self, pkt) -> None:  # noqa: ANN001
         from scapy.layers.dhcp import BOOTP, DHCP
@@ -344,6 +354,11 @@ class PassiveCollector:
             vendor_class=self._as_text(opts.get(OPT_VENDOR_CLASS)),
             detail={"dhcp_message_type": msg_type},
         )
+        if self.on_observe:
+            try:
+                self.on_observe()
+            except Exception:  # noqa: BLE001 - the hook must never stop capture
+                log.exception("on_observe hook failed")
 
     # -- helpers ------------------------------------------------------------
 

@@ -439,7 +439,67 @@
     priv.addEventListener('click', () => setPrivacy(!privacy));
     tools.appendChild(priv);
     tools.appendChild(el('span', { class: 'tool tool--mode', id: 'mode-pill', text: '…' }));
+    tools.appendChild(el('span', { class: 'tool tool--stream', id: 'stream-pill', text: '⇅ connecting',
+      title: 'How this page learns about changes. Streaming: the API holds a request open and answers the moment the collector writes, so the page moves within about a second. Polling: the stream is down and every panel refreshes on its own timer instead.' }));
   }
+
+  /* ================================================================= live */
+
+  /* The page used to learn about the world on six independent timers, 60 to
+   * 120 seconds apart -- on top of whatever the detection cadence added. Now
+   * one long-poll against /api/changes holds a request open for up to 25s
+   * and returns the moment SQLite's change counter moves (a collector wrote,
+   * or an operator acted through the API). Every panel then refreshes at
+   * once; each one's own unchanged() guard keeps the DOM still if its slice
+   * did not move. The timers stay as the fallback when the stream is down.
+   * Hidden tabs pause the stream and resume on return, so a phone in a
+   * pocket costs nothing. */
+  const live = { streaming: false, cursor: null, lastChange: 0, lastAck: 0, backoff: 1000, refreshers: [], paused: false };
+  PNMA.live = live;
+  PNMA.onChange = (fn) => { live.refreshers.push(fn); };
+  PNMA.refreshAll = (why) => {
+    live.lastChange = Date.now();
+    const fns = [loadOverview, loadMap, loadActivity, loadAttack, loadIdentity, loadAgent,
+                 PNMA.loadAlerts, PNMA.loadDevices, PNMA.loadHostPosture, PNMA.loadAvailability].concat(live.refreshers);
+    for (const fn of fns) { if (typeof fn === 'function') { try { const r = fn(why); if (r && r.catch) r.catch(() => {}); } catch (e) { /* a panel reports its own failure */ } } }
+    document.dispatchEvent(new CustomEvent('pnma:change', { detail: { why } }));
+    paintStream();
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function paintStream() {
+    const pill = document.getElementById('stream-pill');
+    if (!pill) return;
+    if (live.paused) { pill.textContent = '⇅ paused'; pill.className = 'tool tool--stream'; return; }
+    if (live.streaming) {
+      const ago = live.lastChange ? relativeTime(live.lastChange / 1000) : null;
+      pill.textContent = '⇅ streaming' + (ago ? ' · ' + (ago === 'just now' ? 'moved just now' : 'moved ' + ago) : '');
+      pill.className = 'tool tool--stream tool--streaming';
+    } else {
+      pill.textContent = '⇅ polling';
+      pill.className = 'tool tool--stream tool--polling';
+    }
+  }
+  async function streamLoop() {
+    for (;;) {
+      if (document.hidden) { live.paused = true; live.streaming = false; paintStream(); await sleep(1000); continue; }
+      if (live.paused) { live.paused = false; PNMA.refreshAll('resume'); }
+      try {
+        const q = live.cursor == null ? '/api/changes' : '/api/changes?cursor=' + encodeURIComponent(live.cursor) + '&wait=25';
+        const r = await getJSON(q);
+        live.cursor = r.cursor; live.lastAck = Date.now(); live.backoff = 1000;
+        if (!live.streaming) { live.streaming = true; paintStream(); }
+        if (r.changed) PNMA.refreshAll('change');
+      } catch (e) {
+        live.streaming = false; paintStream();
+        await sleep(live.backoff);
+        live.backoff = Math.min(live.backoff * 2, 30000);
+      }
+    }
+  }
+  /* Fallback timers: run only while the stream is down. */
+  function every(fn, ms) { setInterval(() => { if (!live.streaming) fn(); }, ms); }
+  PNMA.every = every;
+  setInterval(paintStream, 15000);
 
   /* =============================================================== overview */
 
@@ -1286,11 +1346,13 @@
       for (const x of s.sensors || []) PNMA.learnName(x.hostname);
     }).catch(() => { /* the gate or a dead API; the panels report that themselves */ });
     loadOverview(); loadMap(); loadActivity(); loadAttack(); loadIdentity(); loadAgent();
-    setInterval(loadOverview, 60000);
-    setInterval(loadMap, 60000);
-    setInterval(loadActivity, 60000);
-    setInterval(loadAttack, 120000);
-    setInterval(loadIdentity, 120000);
-    setInterval(loadAgent, 120000);
+    every(loadOverview, 60000);
+    every(loadMap, 60000);
+    every(loadActivity, 60000);
+    every(loadAttack, 120000);
+    every(loadIdentity, 120000);
+    every(loadAgent, 120000);
+    document.addEventListener('visibilitychange', paintStream);
+    streamLoop();
   });
 })();

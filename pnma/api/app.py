@@ -207,6 +207,7 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
             db.record_alert_change(
                 alert_id, "status", row["status"], new_status, actor="operator"
             )
+            writes["n"] += 1
         return {"id": alert_id, "status": new_status}
 
     # -- devices ------------------------------------------------------------
@@ -267,6 +268,7 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
         if row is None:
             raise HTTPException(404, "no such device")
         set_trusted(db, device_id, req.trusted, req.label)
+        writes["n"] += 1
         # Trusting a device resolves its outstanding new-device alert; that is
         # the whole point of the action.
         if req.trusted:
@@ -304,6 +306,30 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
                 for r in rows
             ],
         }
+
+    # -- change notification: the dashboard's live cursor --------------------
+    # A long-poll, not SSE: EventSource cannot send the bearer header this
+    # API requires, and a token in the query string would land in access
+    # logs. fetch() with the existing wrapper is enough. The cursor is
+    # SQLite's data_version (another connection committed) joined with this
+    # process's own write counter (an operator action through this API),
+    # so a phone acknowledging an alert moves the laptop's view too.
+    writes = {"n": 0}
+
+    def _cursor() -> str:
+        return f"{db.data_version()}:{writes['n']}"
+
+    @app.get("/api/changes")
+    def api_changes(cursor: str | None = None, wait: float = 25):
+        wait = max(0.0, min(float(wait), 30.0))
+        deadline = time.monotonic() + wait
+        current = _cursor()
+        if cursor is None:
+            return {"cursor": current, "changed": False, "ts": time.time()}
+        while current == cursor and time.monotonic() < deadline:
+            time.sleep(0.5)
+            current = _cursor()
+        return {"cursor": current, "changed": current != cursor, "ts": time.time()}
 
     # -- the log: one stream over every table (see pnma.events) ------------
 
@@ -494,6 +520,7 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
             raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        writes["n"] += 1
         return {"account_id": account_id, "control": control, "state": req.state,
                 "changed": changed}
 

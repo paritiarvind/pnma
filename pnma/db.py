@@ -299,6 +299,14 @@ class Database:
         with self._lock:
             return self._conn.execute(sql, tuple(params)).fetchall()
 
+    def data_version(self) -> int:
+        """SQLite's cheap change counter: differs between two calls on THIS
+        connection iff another connection committed in between. The API's
+        long-poll uses it to learn that the collector wrote something without
+        scanning any table."""
+        with self._lock:
+            return int(self._conn.execute("PRAGMA data_version").fetchone()[0])
+
     def query_one(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Row | None:
         rows = self.query(sql, params)
         return rows[0] if rows else None

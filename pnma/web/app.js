@@ -2012,8 +2012,11 @@ document.addEventListener('DOMContentLoaded', () => {
    * Acknowledging or resolving an alert does not wait for the next tick -- it
    * forces its own reload, because a UI that leaves a button you just pressed
    * looking unpressed for up to a minute teaches people to press it twice. */
-  setInterval(loadHostPosture, 60000);
-  setInterval(loadDevices, 60000);
-  setInterval(loadAlerts, 60000);
-  setInterval(loadAvailability, 300000);
+  // Fallback cadence only: while viz.js's change stream is up, every panel
+  // refreshes the moment the collector writes instead (PNMA.refreshAll).
+  const every = window.PNMA.every || ((fn, ms) => setInterval(fn, ms));
+  every(loadHostPosture, 60000);
+  every(loadDevices, 60000);
+  every(loadAlerts, 60000);
+  every(loadAvailability, 300000);
 });
