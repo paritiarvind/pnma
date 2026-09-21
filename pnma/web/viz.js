@@ -499,7 +499,6 @@
   /* Fallback timers: run only while the stream is down. */
   function every(fn, ms) { setInterval(() => { if (!live.streaming) fn(); }, ms); }
   PNMA.every = every;
-  setInterval(paintStream, 15000);
 
   /* =============================================================== overview */
 
@@ -1353,6 +1352,7 @@
     every(loadIdentity, 120000);
     every(loadAgent, 120000);
     document.addEventListener('visibilitychange', paintStream);
+    setInterval(paintStream, 15000);
     streamLoop();
   });
 })();
