@@ -115,6 +115,34 @@ def _is_ipv4(value: str) -> bool:
         return False
 
 
+def local_macs() -> list[str]:
+    """Every MAC this host owns, lower-case colon form. Used to attribute the
+    host's own ARP activity: the sensor asking its neighbours who they are
+    must never read as the sensor scanning the network."""
+    macs: set[str] = set()
+    try:
+        if platform.system() == "Windows":
+            out = subprocess.run(["getmac", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                                 timeout=10, check=False).stdout
+            for m in re.findall(r"([0-9A-Fa-f]{2}(?:-[0-9A-Fa-f]{2}){5})", out):
+                macs.add(m.lower().replace("-", ":"))
+        else:
+            out = subprocess.run(["ip", "-o", "link"], capture_output=True, text=True,
+                                 timeout=10, check=False).stdout
+            for m in re.findall(r"link/\w+ ([0-9a-f]{2}(?::[0-9a-f]{2}){5})", out):
+                macs.add(m.lower())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        import uuid
+        node = uuid.getnode()
+        if not (node >> 40) & 1:  # a real hardware address, not a random one
+            macs.add(":".join(f"{(node >> (8 * i)) & 0xff:02x}" for i in reversed(range(6))))
+    except Exception:  # noqa: BLE001
+        pass
+    return sorted(m for m in macs if m != "00:00:00:00:00:00")
+
+
 def mac_for_ip(ip: str) -> str | None:
     """Look up an IP in the ARP cache. Returns None if not present."""
     for entry in read_arp_table():

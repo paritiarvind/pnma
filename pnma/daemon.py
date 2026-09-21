@@ -34,6 +34,7 @@ in rather than silently degrading:
 
 from __future__ import annotations
 
+import json
 import logging
 import platform
 import random
@@ -158,6 +159,14 @@ class Collector:
         self.db.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('gateway_mac', ?)",
             (config.network.gateway_mac,),
+        )
+        # The host's own MACs, so a rule can tell the sensor's ARP traffic from
+        # a scan by someone else (see ArpSweepDetection).
+        from .netutil import local_macs
+
+        self.db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('own_macs', ?)",
+            (json.dumps(local_macs()),),
         )
         self.db.register_sensor(
             self.sensor_id, "network", hostname=socket.gethostname(), version=VERSION

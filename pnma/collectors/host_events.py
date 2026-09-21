@@ -329,6 +329,9 @@ class HostEventCollector:
     """Runs every sub-collector, records the result, never raises."""
 
     source = "host_events"
+    # Events read per log per run. With script-block logging ON this is the
+    # number that matters -- 4104 volume grows by orders of magnitude.
+    WINEVENT_CAP = 1000
 
     def __init__(self, db: Database, sensor_id: str = "host"):
         self.db = db
@@ -460,17 +463,23 @@ $out = foreach ($k in $keys) {
                               detail={"name": p["name"], "publisher": p["publisher"]},
                               severity=None, dedup_key=f"software_removed:{sid}:{int(now)}"):
                     n += 1
-        # The standing fact: anything currently installed that a class flags.
+        # The standing fact. Only the high classes are posture debt (remote
+        # access and activation tooling: a standing door, or a known stealer
+        # carrier); the rest -- Nmap, a tunnel, Tor -- are inventory the Host
+        # tab lists, because a fact has no acknowledge path and a ring that
+        # can never recover from the operator's own tools is alert fatigue.
         flagged = [e for e in seen.values() if software_severity(e["tags"])]
+        debt = [e for e in flagged if software_severity(e["tags"]) == "high"]
         self.db.record_host_fact(
             fact_key="software.flagged", category="persistence",
             title="Installed software of a notable class",
-            state="finding" if flagged else "ok",
-            value=", ".join(f"{e['name']} [{'/'.join(e['tags'])}]" for e in flagged[:6]) or "none",
-            expected="none, or all accounted for by the operator",
-            reason=("Remote-access tools, activation/crack tooling, Tor, or software with no publisher "
-                    "installed in a user-writable path. Each is either yours -- then acknowledge it -- "
-                    "or not.") if flagged else None,
+            state="finding" if debt else "ok",
+            value=(", ".join(f"{e['name']} [{'/'.join(e['tags'])}]" for e in debt[:6]) if debt
+                   else (f"{len(flagged)} notable, none high: " + ", ".join(e["name"] for e in flagged[:6]) if flagged else "none")),
+            expected="no remote-access or activation/crack tooling",
+            reason=("Remote-access tools give whoever holds the account a desktop here; activation/crack "
+                    "tooling is the most common stealer carrier on home PCs. Uninstall, or if it is "
+                    "deliberate, this stays a finding by design.") if debt else None,
             evidence={"count": len(seen), "flagged": [{"name": e["name"], "tags": e["tags"]} for e in flagged]},
         )
         return n, ""
@@ -579,10 +588,11 @@ foreach ($o in $out) {
                               dedup_key=f"autorun_removed:{aid}:{int(now)}"):
                     n += 1
         flagged = [e for e in seen.values() if autorun_severity(e["tags"])]
+        debt = [e for e in flagged if autorun_severity(e["tags"]) in ("high", "medium")]
         self.db.record_host_fact(
             fact_key="autoruns.flagged", category="persistence",
             title="Autorun entries of a notable shape",
-            state="finding" if flagged else "ok",
+            state="finding" if debt else "ok",
             value=", ".join(f"{e['name']} [{'/'.join(e['tags'])}]" for e in flagged[:6]) or "none",
             expected="none, or all accounted for by the operator",
             reason=("A Run key or Startup item that launches a script host, points into a user-writable "
@@ -596,16 +606,19 @@ foreach ($o in $out) {
 
     _WINEVENT_PS = r"""
 param()
-$log = '%(log)s'; $ids = @(%(ids)s); $since = %(since)s
-$flt = @{ LogName = $log; Id = $ids }
+$log = '%(log)s'; $since = %(since)s
+$idx = '(' + ((@(%(ids)s) | ForEach-Object { "EventID=$_" }) -join ' or ') + ')'
+$xpath = "*[System[$idx and (EventRecordID > $since)]]"
 $out = @()
 try {
-  $evs = Get-WinEvent -FilterHashtable $flt -MaxEvents 400 -ErrorAction Stop | Where-Object { $_.RecordId -gt $since }
+  # Oldest-first from the cursor, capped: a burst larger than the cap is read
+  # across successive runs instead of skipped, and the caller sees the cap.
+  $evs = @(Get-WinEvent -LogName $log -FilterXPath $xpath -Oldest -MaxEvents %(cap)s -ErrorAction Stop)
   foreach ($e in $evs) {
     $props = @($e.Properties | ForEach-Object { [string]$_.Value })
     $out += [pscustomobject]@{ record = $e.RecordId; id = $e.Id; t = [int]([DateTimeOffset]$e.TimeCreated).ToUnixTimeSeconds(); level = $e.LevelDisplayName; props = $props; msg = ([string]$e.Message) }
   }
-  $res = [pscustomobject]@{ ok = $true; events = $out; max = ($evs | Measure-Object -Property RecordId -Maximum).Maximum }
+  $res = [pscustomobject]@{ ok = $true; events = $out; max = ($evs | Measure-Object -Property RecordId -Maximum).Maximum; saturated = ($evs.Count -ge %(cap)s) }
 } catch {
   if ($_.Exception.Message -match 'No events were found') { $res = [pscustomobject]@{ ok = $true; events = @(); max = $null } }
   else { $res = [pscustomobject]@{ ok = $false; error = $_.Exception.Message } }
@@ -615,7 +628,8 @@ $res | ConvertTo-Json -Compress -Depth 4
 
     def _read_log(self, log_name: str, ids: list[int], cursor_key: str) -> tuple[list[dict], str]:
         since = int(self._meta(cursor_key) or 0)
-        script = self._WINEVENT_PS % {"log": log_name, "ids": ",".join(str(i) for i in ids), "since": since}
+        script = self._WINEVENT_PS % {"log": log_name, "ids": ",".join(str(i) for i in ids),
+                                      "since": since, "cap": self.WINEVENT_CAP}
         ok, res, err = _ps_marked(script, timeout=90)
         if not ok:
             return [], f"{log_name}: {err}"
@@ -627,10 +641,11 @@ $res | ConvertTo-Json -Compress -Depth 4
         mx = res.get("max")
         if mx:
             self._set_meta(cursor_key, str(int(mx)))
-        elif since == 0:
-            # First run with nothing new: start the cursor at "now" so the
-            # next run does not re-read history either.
-            pass
+        if res.get("saturated"):
+            # More than the cap arrived since the last run. Nothing was skipped
+            # (the cursor only advanced to the last row read), but the log is
+            # ahead of us; say so rather than look caught up.
+            return events, f"{log_name}: {self.WINEVENT_CAP}-event cap hit; catching up next run"
         return events, ""
 
     def collect_winevents(self) -> tuple[int, str]:

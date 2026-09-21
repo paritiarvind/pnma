@@ -310,7 +310,9 @@ class ArpSweepDetection(Detection):
         "Only sweeps that provoke ARP replies the sensor can see -- a scan of the sensor's own "
         "subnet from inside it. A port scan of one host, a scan from another VLAN, or a scanner "
         "that already has the ARP cache populated does not show. PNMA's own sweeps are attributed "
-        "and excluded."
+        "and excluded, and so are replies to the sensor host's own MACs and to the gateway -- "
+        "both ask the LAN who is who as a matter of course, so a scan run FROM this machine by "
+        "someone else is not seen by this rule."
     )
     WINDOW_S = 180
     MIN_TARGETS = 8   # a home LAN has 10-20 devices; a sweep touches most of them
@@ -319,6 +321,19 @@ class ArpSweepDetection(Detection):
         rows = ctx.db.query(
             "SELECT ts, mac, ip, detail FROM observations WHERE source = 'passive_arp' "
             "AND agent_generated = 0 AND ts >= ? ORDER BY ts", (ctx.now - 2 * 3600,))
+        # The sensor's own MACs (written by the daemon at start) and the
+        # gateway: both ask the whole LAN who is who as a matter of course.
+        own: set[str] = set()
+        for key in ("own_macs",):
+            m = ctx.db.query_one("SELECT value FROM meta WHERE key = ?", (key,))
+            if m and m["value"]:
+                try:
+                    own.update(x.lower() for x in json.loads(m["value"]))
+                except ValueError:
+                    pass
+        gw = ctx.db.query_one("SELECT value FROM meta WHERE key = 'gateway_mac'")
+        if gw and gw["value"]:
+            own.add(gw["value"].lower())
         by_dst: dict[str, list[tuple[float, str, str]]] = {}
         for r in rows:
             try:
@@ -326,7 +341,7 @@ class ArpSweepDetection(Detection):
             except ValueError:
                 d = {}
             dst = (d.get("hwdst") or "").lower()
-            if not dst or dst in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
+            if not dst or dst in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00") or dst in own:
                 continue
             by_dst.setdefault(dst, []).append((r["ts"], r["ip"], r["mac"]))
         out = []

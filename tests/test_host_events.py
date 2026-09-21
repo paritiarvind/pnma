@@ -154,6 +154,7 @@ def test_first_run_is_inventory_only_then_diffs(fake):
     assert not db.query("SELECT 1 FROM host_events WHERE kind = 'software_installed'")   # first run: no events
     fact = db.query_one("SELECT state, value FROM host_facts WHERE fact_key = 'software.flagged'")
     assert fact["state"] == "finding" and "AnyDesk" in fact["value"]                       # but the standing fact is honest
+
     # second run: one added, one removed
     fake.software = [_sw("b", "AnyDesk", "philandro Software GmbH"), _sw("c", "Ngrok", "ngrok, Inc.")]
     c.run_once()
@@ -165,6 +166,11 @@ def test_first_run_is_inventory_only_then_diffs(fake):
     # third run, same state: nothing new (dedup)
     c.run_once()
     assert db.query_one("SELECT COUNT(*) n FROM host_events")["n"] == 2
+    # medium classes (security tooling, tunnel, Tor) are inventory, not posture debt
+    fake.software = [_sw("n", "Nmap 7.99", "Nmap Project")]
+    c.run_once()
+    fact = db.query_one("SELECT state, value FROM host_facts WHERE fact_key = 'software.flagged'")
+    assert fact["state"] == "ok" and "Nmap" in fact["value"]
 
 
 def test_autorun_hash_change_is_an_event_and_pnma_is_attributed(fake):
@@ -291,3 +297,21 @@ def test_upload_spike_needs_baseline_and_ratio():
     for i in range(3):
         db2.execute("INSERT INTO host_counters(ts, adapter, bytes_sent, bytes_recv) VALUES(?,?,?,?)", (now - 600 + i * 300, "Wi-Fi", i * 1e9, 0))
     assert rules.UploadSpikeDetection().evaluate(DetectionContext(db=db2, now=now)) == []
+
+
+# ---------------------------------------------------------- live smoke (Windows)
+
+@pytest.mark.skipif(not he.is_windows(), reason="runs the real PowerShell readers")
+def test_live_readers_run_clean_on_this_host():
+    """The mocked tests cannot catch a PowerShell syntax error. This runs every
+    reader once for real against a scratch DB and requires that the only
+    thing it could not read is the Security log (elevation), never a script
+    that failed to parse. Slow (~10s), Windows-only, and worth it: three of
+    the first four bugs in this collector were PowerShell syntax."""
+    db = _db(); c = he.HostEventCollector(db)
+    s = c.run_once()
+    unexpected = [u for u in s.unknown if "Security:" not in u and "cap hit" not in u]
+    assert unexpected == [], unexpected
+    assert db.query_one("SELECT COUNT(*) n FROM host_software")["n"] > 0
+    assert db.query_one("SELECT COUNT(*) n FROM host_counters")["n"] > 0
+    assert db.query_one("SELECT state FROM host_facts WHERE fact_key = 'events.powershell_log'")["state"] == "ok"
