@@ -197,11 +197,16 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
             "resolve": "resolved",
             "reopen": "open",
         }[action]
-        cur = db.execute(
-            "UPDATE alerts SET status = ? WHERE id = ?", (new_status, alert_id)
-        )
-        if cur.rowcount == 0:
+        row = db.query_one("SELECT status FROM alerts WHERE id = ?", (alert_id,))
+        if row is None:
             raise HTTPException(404, "no such alert")
+        if row["status"] != new_status:
+            db.execute(
+                "UPDATE alerts SET status = ? WHERE id = ?", (new_status, alert_id)
+            )
+            db.record_alert_change(
+                alert_id, "status", row["status"], new_status, actor="operator"
+            )
         return {"id": alert_id, "status": new_status}
 
     # -- devices ------------------------------------------------------------

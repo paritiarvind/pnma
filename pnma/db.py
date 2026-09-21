@@ -27,6 +27,13 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
+SEVERITY_ORDER = ["info", "low", "medium", "high", "critical"]
+
+
+def _severity_rank(severity: str) -> int:
+    return SEVERITY_ORDER.index(severity) if severity in SEVERITY_ORDER else 0
+
+
 SCHEMA_VERSION = 1
 
 SCHEMA = """
@@ -223,6 +230,21 @@ CREATE TABLE IF NOT EXISTS identity_accounts (
     notes       TEXT,
     created_at  REAL NOT NULL
 );
+-- Every change to an existing alert's judgement (severity, title, status),
+-- so a refresh is visible history rather than a silent overwrite.
+CREATE TABLE IF NOT EXISTS alert_changes (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id  INTEGER NOT NULL,
+    ts        REAL NOT NULL,
+    field     TEXT NOT NULL,            -- severity|title|status
+    old_value TEXT,
+    new_value TEXT,
+    actor     TEXT NOT NULL DEFAULT 'rule'   -- rule|operator
+);
+CREATE INDEX IF NOT EXISTS idx_alert_changes_alert ON alert_changes(alert_id, ts);
+CREATE INDEX IF NOT EXISTS idx_observations_device_ts ON observations(device_id, ts);
+CREATE INDEX IF NOT EXISTS idx_observations_ts ON observations(ts);
+
 CREATE TABLE IF NOT EXISTS exposure_banners (
     device_id   TEXT NOT NULL,
     port        INTEGER NOT NULL,
@@ -424,39 +446,72 @@ class Database:
     ) -> bool:
         """Create or bump an alert. Returns True if this alert is new.
 
-        Bumping a resolved alert reopens it -- a condition that comes back is
-        news again.
+        Bumping refreshes the whole judgement -- severity, title, description,
+        technique -- not just the evidence, so an operator never reads stale
+        reasoning attached to current telemetry. Each changed field is written
+        to ``alert_changes`` so the refresh is visible history rather than a
+        silent overwrite.
+
+        Status: a resolved alert reopens (a condition that comes back is news
+        again); an acknowledged one reopens only when severity escalates, so a
+        flapping rule cannot undo triage but an escalation is never hidden
+        behind an old acknowledgement.
         """
         now = ts or time.time()
-        existed = self.query_one(
-            "SELECT 1 FROM alerts WHERE dedup_key = ?", (dedup_key,)
+        existing = self.query_one(
+            "SELECT id, severity, title, status FROM alerts WHERE dedup_key = ?",
+            (dedup_key,),
         )
+        evidence_json = json.dumps(evidence) if evidence else None
+        if existing is None:
+            self.execute(
+                """INSERT INTO alerts(dedup_key, rule_id, severity, title,
+                                      description, device_id, mitre_id, mitre_name,
+                                      evidence, first_seen, last_seen)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (dedup_key, rule_id, severity, title, description, device_id,
+                 mitre_id, mitre_name, evidence_json, now, now),
+            )
+            return True
+
+        escalated = _severity_rank(severity) > _severity_rank(existing["severity"])
+        new_status = existing["status"]
+        if existing["status"] == "resolved" or (
+            existing["status"] == "acknowledged" and escalated
+        ):
+            new_status = "open"
+        for field, old, new in (
+            ("severity", existing["severity"], severity),
+            ("title", existing["title"], title),
+            ("status", existing["status"], new_status),
+        ):
+            if old != new:
+                self.record_alert_change(existing["id"], field, old, new, ts=now)
         self.execute(
-            """INSERT INTO alerts(dedup_key, rule_id, severity, title,
-                                  description, device_id, mitre_id, mitre_name,
-                                  evidence, first_seen, last_seen)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(dedup_key) DO UPDATE SET
-                   last_seen = excluded.last_seen,
-                   count     = count + 1,
-                   evidence  = excluded.evidence,
-                   status    = CASE WHEN alerts.status = 'resolved'
-                                    THEN 'open' ELSE alerts.status END""",
-            (
-                dedup_key,
-                rule_id,
-                severity,
-                title,
-                description,
-                device_id,
-                mitre_id,
-                mitre_name,
-                json.dumps(evidence) if evidence else None,
-                now,
-                now,
-            ),
+            """UPDATE alerts SET last_seen = ?, count = count + 1, evidence = ?,
+                                 severity = ?, title = ?, description = ?,
+                                 mitre_id = ?, mitre_name = ?, status = ?
+               WHERE id = ?""",
+            (now, evidence_json, severity, title, description, mitre_id,
+             mitre_name, new_status, existing["id"]),
         )
-        return existed is None
+        return False
+
+    def record_alert_change(
+        self,
+        alert_id: int,
+        field: str,
+        old_value: str | None,
+        new_value: str | None,
+        *,
+        actor: str = "rule",
+        ts: float | None = None,
+    ) -> None:
+        self.execute(
+            "INSERT INTO alert_changes(alert_id, ts, field, old_value, new_value, actor) "
+            "VALUES(?,?,?,?,?,?)",
+            (alert_id, ts or time.time(), field, old_value, new_value, actor),
+        )
 
     def log_scan(
         self,
