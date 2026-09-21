@@ -108,6 +108,109 @@ function relativeTime(ts) {
   return days + ' ' + plural(days, 'day') + ' ago';
 }
 
+/* ------------------------------------------------------- host inventory */
+
+const CLASS_LABEL = {
+  remote_access: 'remote access', activation_tooling: 'activation / crack', tor: 'Tor', tunnel: 'tunnel',
+  security_tooling: 'security tooling', no_publisher: 'no publisher', user_writable_path: 'user-writable path',
+  recent: 'installed this week', trusted_publisher: 'known vendor', script_host: 'script host',
+  obfuscated_or_downloader: 'encoded / downloader', unsigned: 'unsigned', pnma_own: 'PNMA itself',
+};
+const FLAG_CLASSES = new Set(['remote_access', 'activation_tooling', 'tor', 'tunnel', 'security_tooling', 'script_host', 'obfuscated_or_downloader', 'unsigned']);
+
+function classChips(tags) {
+  return el('span', { class: 'classchips' }, (tags || []).map((t) =>
+    el('span', { class: 'classchip' + (FLAG_CLASSES.has(t) ? ' classchip--flag' : ''), text: CLASS_LABEL[t] || t })));
+}
+
+/* Installed software and autoruns from /api/host/software and
+ * /api/host/autoruns. "Flagged only" is the default view: on a real machine
+ * the full list is 130 rows and the analyst wants the six that matter, but
+ * the six are only credible next to the count of the rest. */
+let inventoryShowAll = false;
+async function loadHostInventory() {
+  const body = document.getElementById('host-inventory-body');
+  if (!body) return;
+  try {
+    const [sw, ar] = await Promise.all([
+      fetch('/api/host/software').then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
+      fetch('/api/host/autoruns').then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
+    ]);
+    const software = sw.software || [];
+    const autoruns = ar.autoruns || [];
+    const sig = JSON.stringify([software, autoruns, inventoryShowAll]);
+    if (body.dataset.sig === sig) return;
+    body.dataset.sig = sig;
+    clear(body);
+    if (!software.length && !autoruns.length) {
+      body.appendChild(el('div', { class: 'placeholder' }, [
+        el('strong', { text: 'No inventory yet' }),
+        el('p', { text: 'The host-events collector has not run on this machine (Windows only; it runs with the collector every five minutes).' }),
+      ]));
+      return;
+    }
+    const flagged = (rows) => rows.filter((r) => (r.tags || []).some((t) => FLAG_CLASSES.has(t)));
+    const swShown = inventoryShowAll ? software : flagged(software);
+    const arShown = inventoryShowAll ? autoruns : flagged(autoruns);
+    const toggle = el('button', { class: 'btn', type: 'button', text: inventoryShowAll ? 'Show flagged only' : 'Show all ' + software.length + ' programs and ' + autoruns.length + ' autoruns' });
+    toggle.addEventListener('click', () => { inventoryShowAll = !inventoryShowAll; loadHostInventory(); });
+    body.appendChild(el('div', { class: 'inventory__head' }, [
+      el('p', { class: 'alert__desc', text: software.length + ' installed ' + plural(software.length, 'program') + ', ' + flagged(software).length + ' flagged \u00b7 ' + autoruns.length + ' ' + plural(autoruns.length, 'autorun') + ', ' + flagged(autoruns).length + ' flagged' }),
+      toggle,
+    ]));
+    const row = (cells, cls) => el('div', { class: 'inv__row ' + (cls || '') }, cells.map((c, i) => el('div', { class: 'inv__cell inv__cell--' + i }, Array.isArray(c) ? c : [c])));
+    body.appendChild(el('h3', { class: 'sub', text: 'Software' + (inventoryShowAll ? '' : ' (flagged)') }));
+    body.appendChild(el('div', { class: 'inv', role: 'table' }, swShown.length ? swShown.map((s) => row([
+      el('strong', { text: s.name }),
+      s.publisher || '\u2014',
+      (s.version || '') + (s.installed_at ? ' \u00b7 ' + relativeTime(s.installed_at) : ''),
+      classChips(s.tags),
+      el('span', { class: 'inv__path', text: s.location || '' }),
+    ], (s.tags || []).some((t) => FLAG_CLASSES.has(t)) ? 'inv__row--flag' : '')) : [el('p', { class: 'alert__desc', text: 'Nothing flagged.' })]));
+    body.appendChild(el('h3', { class: 'sub', text: 'Autoruns' + (inventoryShowAll ? '' : ' (flagged)') }));
+    body.appendChild(el('div', { class: 'inv', role: 'table' }, arShown.length ? arShown.map((a) => row([
+      el('strong', { text: a.name }),
+      el('span', { class: 'inv__path', text: a.location }),
+      a.signed === 1 ? 'signed' : a.signed === 0 ? 'UNSIGNED' : 'not checked',
+      classChips(a.tags),
+      el('span', { class: 'inv__path', title: a.sha256 ? 'sha256 ' + a.sha256 : '' }, [a.command || '', a.sha256 ? el('code', { class: 'inv__hash', text: ' ' + a.sha256.slice(0, 12) }) : null]),
+    ], (a.tags || []).some((t) => FLAG_CLASSES.has(t)) ? 'inv__row--flag' : '')) : [el('p', { class: 'alert__desc', text: 'Nothing flagged.' })]));
+  } catch (err) {
+    clear(body);
+    body.appendChild(el('div', { class: 'error' }, [el('strong', { text: 'Could not load the inventory' }), el('p', { text: String(err.message || err) })]));
+  }
+}
+
+/* The host event stream, newest first, through the same eventLog component
+ * as the drawer and the Logs tab. */
+async function loadHostEvents() {
+  const body = document.getElementById('host-events-body');
+  if (!body) return;
+  try {
+    const r = await fetch('/api/events?kinds=host_event&hours=168&limit=300');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const events = data.events || [];
+    const sig = JSON.stringify(events.map((e) => e.ref));
+    if (body.dataset.sig === sig) return;
+    body.dataset.sig = sig;
+    clear(body);
+    if (!events.length) {
+      body.appendChild(el('div', { class: 'placeholder' }, [
+        el('strong', { text: 'No host events in the last 7 days' }),
+        el('p', { text: 'Either nothing notable happened, or the host-events collector is not running here. The Agent tab lists what each rule reads.' }),
+      ]));
+      return;
+    }
+    const flagged = events.filter((e) => e.detail && e.detail.severity && !e.agent_generated).length;
+    body.appendChild(el('p', { class: 'alert__desc', text: events.length + ' ' + plural(events.length, 'event') + ' in 7 days, ' + flagged + ' carrying a severity (those become alerts). Open a row for the fields; the SHA-256, where present, is what you look up by hand.' }));
+    body.appendChild(eventLog(events, { order: 'desc' }));
+  } catch (err) {
+    clear(body);
+    body.appendChild(el('div', { class: 'error' }, [el('strong', { text: 'Could not load host events' }), el('p', { text: String(err.message || err) })]));
+  }
+}
+
 /* ------------------------------------------------------- state indicators */
 
 /** The state chip: glyph + word + colour. Used on every fact card. */
@@ -773,7 +876,7 @@ function evidenceGrid(ev) {
  * rest are wayfinding so a reader can skim "what kind of row is this". */
 const EVENT_KIND_LABEL = {
   observation: 'seen', scan: 'agent', delivery: 'delivered', alert: 'alert',
-  alert_change: 'changed', availability: 'ping', host_fact: 'control', port: 'port', banner: 'banner',
+  alert_change: 'changed', availability: 'ping', host_fact: 'control', host_event: 'host', port: 'port', banner: 'banner',
 };
 
 function clockTime(ts) {
@@ -789,7 +892,7 @@ function clockTime(ts) {
  * alert drawer (the window around one alert) and the Logs tab (everything).
  * Every string reaches the DOM through el(), so the privacy mask applies.
  *
- * opts: { markerTs, markerText, order: 'asc'|'desc', emptyText }
+ * opts: { markerTs, markerText, order: 'asc'|'desc', emptyText, bar (false hides the filter chips) }
  */
 function eventLog(events, opts) {
   opts = opts || {};
@@ -800,7 +903,7 @@ function eventLog(events, opts) {
   const state = { hideAgent: false, kinds: new Set() };
   const bar = el('div', { class: 'evlog__bar' });
   const list = el('div', { class: 'evlog__rows', role: 'list' });
-  wrap.appendChild(bar);
+  if (opts.bar !== false) wrap.appendChild(bar);
   wrap.appendChild(list);
 
   function buildBar() {
@@ -830,7 +933,7 @@ function eventLog(events, opts) {
   }
 
   function row(e) {
-    const sev = e.kind === 'alert' && e.detail ? e.detail.severity : null;
+    const sev = (e.kind === 'alert' || e.kind === 'host_event') && e.detail ? e.detail.severity : null;
     const r = el('details', { class: 'evlog__row evlog__row--' + e.kind + (e.agent_generated ? ' is-agent' : '') + (sev ? ' evlog__row--sev-' + sev : ''), role: 'listitem' });
     const folded = (e.count || 1) > 1;
     r.appendChild(el('summary', { class: 'evlog__head' }, [
@@ -902,7 +1005,8 @@ function eventLog(events, opts) {
   }
   buildBar();
   render();
-  wrap.refresh = (next) => { rows.splice(0, rows.length, ...sortRows(next)); buildBar(); render(); };
+  wrap.refresh = (next) => { rows.splice(0, rows.length, ...sortRows(next)); wrap.events = rows.slice(); buildBar(); render(); };
+  wrap.events = rows.slice();
   return wrap;
 }
 
@@ -2015,6 +2119,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Fallback cadence only: while viz.js's change stream is up, every panel
   // refreshes the moment the collector writes instead (PNMA.refreshAll).
   const every = window.PNMA.every || ((fn, ms) => setInterval(fn, ms));
+  loadHostInventory(); loadHostEvents();
+  every(loadHostInventory, 300000);
+  every(loadHostEvents, 120000);
+  if (window.PNMA.onChange) { window.PNMA.onChange(loadHostEvents); window.PNMA.onChange(loadHostInventory); }
   every(loadHostPosture, 60000);
   every(loadDevices, 60000);
   every(loadAlerts, 60000);

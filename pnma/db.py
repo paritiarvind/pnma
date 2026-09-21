@@ -245,6 +245,56 @@ CREATE INDEX IF NOT EXISTS idx_alert_changes_alert ON alert_changes(alert_id, ts
 CREATE INDEX IF NOT EXISTS idx_observations_device_ts ON observations(device_id, ts);
 CREATE INDEX IF NOT EXISTS idx_observations_ts ON observations(ts);
 
+-- What happened on the monitoring host (pnma.collectors.host_events): a
+-- script block, a service install, a new autorun, a hidden directory, a
+-- notable outbound connection. agent_generated marks PNMA's own scripts.
+CREATE TABLE IF NOT EXISTS host_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              REAL NOT NULL,
+    sensor_id       TEXT,
+    kind            TEXT NOT NULL,      -- see host_events.EVENT_KINDS
+    summary         TEXT NOT NULL,
+    detail          TEXT,               -- JSON
+    severity        TEXT,               -- rule hint; null = inventory only
+    mitre_id        TEXT,
+    agent_generated INTEGER NOT NULL DEFAULT 0,
+    dedup_key       TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_host_events_ts ON host_events(ts);
+CREATE INDEX IF NOT EXISTS idx_host_events_kind ON host_events(kind, ts);
+CREATE TABLE IF NOT EXISTS host_software (
+    software_id  TEXT PRIMARY KEY,      -- hive:registry key
+    name         TEXT NOT NULL,
+    version      TEXT,
+    publisher    TEXT,
+    location     TEXT,
+    hive         TEXT,
+    installed_at REAL,
+    tags         TEXT,                  -- JSON list of class tags
+    first_seen   REAL NOT NULL,
+    last_seen    REAL NOT NULL,
+    removed_at   REAL
+);
+CREATE TABLE IF NOT EXISTS host_autoruns (
+    autorun_id  TEXT PRIMARY KEY,       -- location::name
+    location    TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    command     TEXT,
+    signed      INTEGER,                -- 1 valid signature, 0 not, null unknown
+    sha256      TEXT,
+    tags        TEXT,
+    first_seen  REAL NOT NULL,
+    last_seen   REAL NOT NULL,
+    removed_at  REAL
+);
+CREATE TABLE IF NOT EXISTS host_counters (
+    ts         REAL NOT NULL,
+    adapter    TEXT NOT NULL,
+    bytes_sent REAL NOT NULL,
+    bytes_recv REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_host_counters ON host_counters(adapter, ts);
+
 CREATE TABLE IF NOT EXISTS exposure_banners (
     device_id   TEXT NOT NULL,
     port        INTEGER NOT NULL,
@@ -520,6 +570,29 @@ class Database:
             "VALUES(?,?,?,?,?,?)",
             (alert_id, ts or time.time(), field, old_value, new_value, actor),
         )
+
+    def record_host_event(
+        self,
+        *,
+        kind: str,
+        ts: float,
+        summary: str,
+        detail: dict | None,
+        severity: str | None,
+        dedup_key: str,
+        agent_generated: bool = False,
+        mitre_id: str | None = None,
+        sensor_id: str | None = None,
+    ) -> bool:
+        """Insert one host event; returns False if dedup_key was already there."""
+        cur = self.execute(
+            """INSERT OR IGNORE INTO host_events(ts, sensor_id, kind, summary, detail,
+                                                 severity, mitre_id, agent_generated, dedup_key)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (ts, sensor_id, kind, summary, json.dumps(detail) if detail else None,
+             severity, mitre_id, int(bool(agent_generated)), dedup_key),
+        )
+        return cur.rowcount > 0
 
     def log_scan(
         self,

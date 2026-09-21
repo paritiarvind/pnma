@@ -51,6 +51,7 @@
   --nav-alerts:    #ec4899;
   --nav-identity:  #c98500;
   --nav-agent:     #7c88ff;
+  --nav-logs:      #94a3b8;
 
   /* State palette. These three are load-bearing: they are the only encoding of
    * a check's outcome, and they must stay mutually distinguishable. Never
@@ -1219,6 +1220,7 @@ input:focus-visible,
 .tabs__tab[data-tab="alerts"]   { --nav-color: var(--nav-alerts); }
 .tabs__tab[data-tab="identity"] { --nav-color: var(--nav-identity); }
 .tabs__tab[data-tab="agent"]    { --nav-color: var(--nav-agent); }
+.tabs__tab[data-tab="logs"]     { --nav-color: var(--nav-logs); }
 
 /* The icon is muted until its tab is hovered or active -- a rail of six
  * fully-saturated icons all the time is closer to a colour swatch than a
@@ -1783,7 +1785,7 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .evlog__chip--scan, .evlog__chip--delivery { --evk: var(--nav-agent); }
 .evlog__chip--alert, .evlog__chip--alert_change { --evk: var(--nav-alerts); }
 .evlog__chip--availability { --evk: var(--nav-overview); }
-.evlog__chip--host_fact { --evk: var(--nav-host); }
+.evlog__chip--host_fact, .evlog__chip--host_event { --evk: var(--nav-host); }
 .evlog__chip--port, .evlog__chip--banner { --evk: var(--nav-identity); }
 
 .evlog__rows { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
@@ -1793,14 +1795,15 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .evlog__row--scan, .evlog__row--delivery { --evk: var(--nav-agent); }
 .evlog__row--alert, .evlog__row--alert_change { --evk: var(--nav-alerts); }
 .evlog__row--availability { --evk: var(--nav-overview); }
-.evlog__row--host_fact { --evk: var(--nav-host); }
+.evlog__row--host_fact, .evlog__row--host_event { --evk: var(--nav-host); }
 .evlog__row--port, .evlog__row--banner { --evk: var(--nav-identity); }
 .evlog__row--sev-critical { --evk: var(--sev-critical); }
 .evlog__row--sev-high { --evk: var(--sev-high); }
 .evlog__row--sev-medium { --evk: var(--sev-medium); }
+.evlog__row--sev-low { --evk: var(--sev-low); }
 .evlog__row.is-agent .evlog__sum { color: var(--fg-muted); }
 .evlog__head {
-  display: grid; grid-template-columns: minmax(8.5ch, max-content) 6.5ch 11ch 1fr; gap: var(--s2); align-items: baseline;
+  display: grid; grid-template-columns: minmax(8.5ch, max-content) minmax(5ch, max-content) 11ch 1fr; gap: var(--s2); align-items: baseline;
   padding: 5px 10px; cursor: pointer; font-size: 12.5px; line-height: 1.45; list-style: none;
 }
 .evlog__head::-webkit-details-marker { display: none; }
@@ -1827,4 +1830,36 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
   .evlog__src { display: none; }
   .evlog__sum { grid-column: 1 / -1; }
   .evlog__chip--toggle { margin-left: 0; }
+}
+
+/* ---- logs tab, host inventory --------------------------------------------- */
+.logs__bar { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; margin-bottom: var(--s2); }
+.logs__select, .logs__search {
+  font: inherit; font-size: 13px; color: var(--fg); background: var(--bg-raised); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 6px 10px;
+}
+.logs__search { flex: 1 1 220px; min-width: 160px; }
+.logs__select:focus-visible, .logs__search:focus-visible { outline: none; box-shadow: var(--shadow-focus); border-color: var(--accent); }
+.logs__kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: var(--s2); }
+.logs__count { margin: 0 0 var(--s2); font-size: 12px; color: var(--fg-dim); }
+.rule__requires { color: var(--fg-muted); font-size: 12px; margin: var(--s2) 0 0; }
+.rule__requires strong, .rule__blind strong { color: var(--fg); font-weight: 600; }
+
+.inventory__head { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; justify-content: space-between; margin-bottom: var(--s2); }
+.inv { display: grid; gap: 4px; }
+.inv__row {
+  display: grid; grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1fr) minmax(100px, 0.8fr) minmax(140px, 1fr) minmax(160px, 2fr);
+  gap: var(--s2); align-items: baseline; padding: 6px 10px; font-size: 12.5px;
+  background: var(--bg-raised); border: 1px solid var(--line); border-left: 3px solid transparent; border-radius: var(--radius-sm);
+}
+.inv__row--flag { border-left-color: var(--sev-medium); }
+.inv__cell { min-width: 0; overflow-wrap: anywhere; }
+.inv__path { font-family: var(--mono); font-size: 11.5px; color: var(--fg-muted); overflow-wrap: anywhere; }
+.inv__hash { font-size: 11px; color: var(--fg-dim); }
+.classchips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.classchip { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--fg-muted); white-space: nowrap; }
+.classchip--flag { color: var(--sev-medium); border-color: color-mix(in srgb, var(--sev-medium) 50%, transparent); }
+@media (max-width: 900px) {
+  .inv__row { grid-template-columns: 1fr 1fr; }
+  .inv__cell--4 { grid-column: 1 / -1; }
 }

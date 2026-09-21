@@ -39,7 +39,7 @@ from typing import Any, Iterable
 from .db import Database
 
 KINDS = ("observation", "scan", "alert", "alert_change", "availability",
-         "host_fact", "port", "banner", "delivery")
+         "host_fact", "host_event", "port", "banner", "delivery")
 
 # scan_runs.kind values that are the agent talking to the operator, not the
 # network. They get kind="delivery" so the drawer can show "toast shown /
@@ -237,6 +237,28 @@ def _host_facts(db: Database, since: float, until: float, *, fact_key: str | Non
                    ref=f"host_fact:{r['fact_key']}") for r in rows]
 
 
+def _host_events(db: Database, since: float, until: float, *, kinds: set[str] | None,
+                 limit: int) -> list[dict]:
+    where = ["ts >= ?", "ts <= ?"]
+    params: list[Any] = [since, until]
+    if kinds:
+        where.append("kind IN (%s)" % _marks(len(kinds)))
+        params.extend(sorted(kinds))
+    rows = db.query(
+        "SELECT id, ts, kind, summary, detail, severity, mitre_id, agent_generated FROM host_events "
+        "WHERE " + " AND ".join(where) + " ORDER BY ts DESC LIMIT ?", (*params, limit))
+    out = []
+    for r in rows:
+        d = _loads(r["detail"]) or {}
+        out.append(_event(r["ts"], "host_event", r["kind"],
+                          entity=(d.get("path") or d.get("name") or d.get("process") or r["kind"]) if isinstance(d, dict) else r["kind"],
+                          summary=r["summary"], agent_generated=r["agent_generated"],
+                          detail={"severity": r["severity"], "mitre_id": r["mitre_id"],
+                                  **(d if isinstance(d, dict) else {})},
+                          ref=f"host_event:{r['id']}"))
+    return out
+
+
 def _ports(db: Database, since: float, until: float, *, device_id: str | None,
            limit: int) -> list[dict]:
     where = ["(first_seen BETWEEN ? AND ? OR closed_at BETWEEN ? AND ?)"]
@@ -312,6 +334,8 @@ def query_events(db: Database, *, since: float | None = None, until: float | Non
         events += _availability(db, since, until, device_id=device_id, limit=limit)
     if "host_fact" in wanted and not device_id:
         events += _host_facts(db, since, until, fact_key=None, limit=limit)
+    if "host_event" in wanted and not device_id:
+        events += _host_events(db, since, until, kinds=None, limit=limit)
     if "port" in wanted:
         events += _ports(db, since, until, device_id=device_id, limit=limit)
     if "banner" in wanted:
@@ -388,6 +412,10 @@ def investigate(db: Database, alert_id: int, *, before_s: int = 3600,
         # Host / identity / agent alerts: the agent's own runs are the context.
         events += [e for e in _scans(db, since, until, targets=set(), limit=limit)
                    if e["source"] in ("host_posture", *DELIVERY_KINDS)]
+    if isinstance(evidence, dict) and evidence.get("host_event_id"):
+        # A host-event alert: its own row plus what else happened on the host
+        # in the window -- the same "what was going on" an analyst wants.
+        events += _host_events(db, since, until, kinds=None, limit=limit)
     fact_key = evidence.get("fact_key") if isinstance(evidence, dict) else None
     if fact_key:
         # The control's current row, whenever it last moved: for a host alert

@@ -189,6 +189,15 @@ class Collector:
         # defensible reading of a safety gate rather than an oversight, but it
         # is a choice: the alternative is a daemon that keeps reading its own
         # host while refusing to touch the network.
+        self.host_events = None
+        if config.collector.host_events:
+            from .collectors.host_events import HostEventCollector
+
+            ok, reason = HostEventCollector.available()
+            if ok:
+                self.host_events = HostEventCollector(self.db, self.sensor_id)
+            else:
+                log.info("host events not scheduled: %s", reason)
         self.host: HostPostureCollector | None = None
         if not config.collector.host_posture:
             self.host_status = "disabled in config (collector.host_posture = false)"
@@ -373,7 +382,7 @@ class Collector:
     # guard recheck, KEV refresh, the detection tick itself) do not.
     _DETECT_AFTER = frozenset({
         "arp_table", "discovery", "ping", "port_scan", "host_posture",
-        "honeypot", "confirm_exposure", "maillog",
+        "honeypot", "confirm_exposure", "maillog", "host_events",
     })
 
     def _after_task(self, name: str) -> None:
@@ -636,6 +645,10 @@ class Collector:
             )
         else:
             log.info("host posture not scheduled: %s", self.host_status)
+        if self.host_events is not None:
+            self._scheduler.every(
+                cc.host_events_interval_s, self.host_events.run_once, "host_events"
+            )
         self._scheduler.every(cc.detection_interval_s, self._run_detections, "detect")
         self._scheduler.every(GUARD_RECHECK_S, self._recheck_guard, "guard_recheck")
         self._scheduler.every(PRUNE_INTERVAL_S, self._prune, "prune")

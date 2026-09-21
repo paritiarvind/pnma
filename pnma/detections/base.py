@@ -103,6 +103,9 @@ class Detection(ABC):
     # What this rule cannot see. Stated explicitly because an honest account of
     # coverage gaps is more useful than an implied claim of completeness.
     blind_spots: str = ""
+    # The telemetry this rule needs to fire at all. A rule whose data source
+    # is not being collected is not coverage, and the Agent tab says so.
+    requires: str = ""
 
     @abstractmethod
     def evaluate(self, ctx: DetectionContext) -> list[Finding]:
@@ -249,6 +252,7 @@ class DetectionEngine:
                 "mitre_id": r.mitre_id,
                 "mitre_name": r.mitre_name,
                 "blind_spots": r.blind_spots,
+                "requires": r.requires,
             }
             for r in self.rules
         ]

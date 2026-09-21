@@ -70,6 +70,11 @@ detection_interval_s  = 60      # run the detection rules
 # as passing.
 host_posture            = true
 host_posture_interval_s = 1800
+# What happened on the host: installed software and autorun diffs, PowerShell
+# 4104 / service 7045 / log-cleared events, hidden directories, notable
+# outbound connections, adapter counters. Windows-only, unelevated is fine.
+host_events             = true
+host_events_interval_s  = 300
 
 # Passive ARP/DHCP sniffing. Requires Administrator/root and Npcap (Windows) or
 # libpcap (Linux/macOS). This captures ARP and DHCP *headers only* -- never

@@ -331,6 +331,36 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
             current = _cursor()
         return {"cursor": current, "changed": current != cursor, "ts": time.time()}
 
+    # -- host inventory (pnma.collectors.host_events) ------------------------
+
+    @app.get("/api/host/software")
+    def host_software(include_removed: bool = False):
+        rows = db.query("SELECT * FROM host_software" + ("" if include_removed else " WHERE removed_at IS NULL")
+                        + " ORDER BY name COLLATE NOCASE")
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["tags"] = json.loads(d.get("tags") or "[]")
+            except ValueError:
+                d["tags"] = []
+            out.append(d)
+        return {"software": out}
+
+    @app.get("/api/host/autoruns")
+    def host_autoruns(include_removed: bool = False):
+        rows = db.query("SELECT * FROM host_autoruns" + ("" if include_removed else " WHERE removed_at IS NULL")
+                        + " ORDER BY location, name COLLATE NOCASE")
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["tags"] = json.loads(d.get("tags") or "[]")
+            except ValueError:
+                d["tags"] = []
+            out.append(d)
+        return {"autoruns": out}
+
     # -- the log: one stream over every table (see pnma.events) ------------
 
     @app.get("/api/events")

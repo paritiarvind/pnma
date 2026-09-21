@@ -672,6 +672,61 @@ def cmd_maillog(args) -> int:
     return 0
 
 
+def cmd_quarantine(args) -> int:
+    """Copy a suspect file into data/quarantine as a password-protected zip.
+
+    The hand-off format for a sandbox: the file never runs here, the archive
+    cannot be opened by accident (password "infected", the industry habit),
+    and the SHA-256 is recorded next to it so the sample can be matched to
+    the alert that pointed at it and looked up by hand. PNMA itself makes no
+    reputation lookup -- that is egress, and it is your call, not the agent's.
+    """
+    import hashlib
+    import shutil
+    import subprocess
+    import time
+    from pathlib import Path
+
+    src = Path(args.path)
+    if not src.is_file():
+        print(f"not a file: {src}")
+        return 2
+    h = hashlib.sha256()
+    with open(src, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    digest = h.hexdigest()
+    qdir = Path(args.database or "data").parent / "quarantine" if args.database else Path("data/quarantine")
+    qdir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    archive = qdir / f"{stamp}-{digest[:12]}.zip"
+    # 7-Zip encrypts; Python's zipfile cannot write passwords. Fall back to a
+    # plain zip with a loud name so the operator knows it is NOT protected.
+    seven = shutil.which("7z") or shutil.which("7za")
+    protected = False
+    if seven:
+        r = subprocess.run([seven, "a", "-tzip", "-pinfected", "-mem=AES256", str(archive), str(src)],
+                           capture_output=True, text=True, check=False)
+        protected = r.returncode == 0
+    if not protected:
+        import zipfile
+        archive = archive.with_name(archive.stem + "-UNPROTECTED.zip")
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(src, src.name)
+    note = archive.with_suffix(".txt")
+    note.write_text(
+        f"source: {src}\nsha256: {digest}\nsize: {src.stat().st_size}\n"
+        f"quarantined: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"password: {'infected' if protected else 'NONE -- install 7-Zip for a protected archive'}\n"
+        f"note: {args.note or ''}\n", encoding="utf-8")
+    print(f"  sha256   {digest}")
+    print(f"  archive  {archive}{'' if protected else '  (NOT password-protected: 7z not found)'}")
+    print(f"  note     {note}")
+    print("  next     move the archive to the sandbox VM (docs/PENTEST_LAB.md, 'Sandbox');"
+          " look the hash up by hand before opening anything.")
+    return 0
+
+
 def cmd_notify_test(args) -> int:
     """Send a test alert through the enabled outbound channels + local toast."""
     from dataclasses import dataclass
@@ -772,6 +827,12 @@ def main(argv: list[str] | None = None) -> int:
         help="report disagreements without writing; exits 1 if any are found",
     )
     p.set_defaults(func=cmd_oui_update)
+
+    p = sub.add_parser("quarantine", help="zip a suspect file (password 'infected') with its hash for the sandbox")
+    p.add_argument("path", help="file to quarantine; it is copied, never run")
+    p.add_argument("--note", default="", help="why: the alert id or what pointed at it")
+    p.add_argument("--database", default=None, help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_quarantine)
 
     p = sub.add_parser("detections", help="list rules and their blind spots")
     p.add_argument("--json", action="store_true")

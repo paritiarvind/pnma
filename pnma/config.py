@@ -72,6 +72,11 @@ class CollectorConfig:
     # spawns seven PowerShell processes. Posture also genuinely moves slowly --
     # these are configuration states, not traffic.
     host_posture_interval_s: int = 1800
+    # Host events (pnma.collectors.host_events): software/autorun diffs, event
+    # logs, hidden dirs, notable connections, adapter counters. Five minutes:
+    # six PowerShell processes per run, and the event logs are incremental.
+    host_events: bool = True
+    host_events_interval_s: int = 300
 
 
 @dataclass

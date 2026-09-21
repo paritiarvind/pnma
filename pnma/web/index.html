@@ -141,6 +141,35 @@
     </div>
   </section>
 
+  <section class="section" id="host-events" data-tab="host">
+    <div class="section__head">
+      <h2 class="section__title">What happened on this host</h2>
+      <p class="section__note">
+        Script blocks Windows logged, services and tasks installed, autoruns
+        that appeared or changed, hidden directories, outbound connections
+        worth a look. PNMA&rsquo;s own scripts are marked, not hidden.
+      </p>
+    </div>
+    <div id="host-events-body">
+      <div class="placeholder placeholder--loading">Loading host events&hellip;</div>
+    </div>
+  </section>
+
+  <section class="section" id="host-inventory" data-tab="host">
+    <div class="section__head">
+      <h2 class="section__title">Installed software and autoruns</h2>
+      <p class="section__note">
+        Every uninstall entry and every Run key / Startup item, classified by
+        what kind of thing it is rather than by name. Flags are for you to
+        confirm or dismiss; a tool you installed is still a tool worth knowing
+        is there.
+      </p>
+    </div>
+    <div id="host-inventory-body">
+      <div class="placeholder placeholder--loading">Loading inventory&hellip;</div>
+    </div>
+  </section>
+
   <!-- ============================================================== alerts -->
 
   <section class="section" id="alerts" data-tab="alerts">
@@ -207,6 +236,20 @@
     </div>
   </section>
 
+
+  <section class="section" id="logs" data-tab="logs">
+    <div class="section__head">
+      <h2 class="section__title">Logs</h2>
+      <p class="section__note">
+        Everything PNMA recorded, as one stream: sightings, scans, pings,
+        alerts and their changes, host controls and host events. Filter by
+        kind, device or text; it tails live while the stream is up.
+      </p>
+    </div>
+    <div id="logs-body">
+      <div class="placeholder placeholder--loading">Loading the log&hellip;</div>
+    </div>
+  </section>
 
   <section class="section" id="activity" data-tab="agent">
     <div class="section__head">

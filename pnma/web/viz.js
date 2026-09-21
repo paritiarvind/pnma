@@ -241,7 +241,7 @@
 
   const TABS = [
     ['overview', 'Overview'], ['network', 'Network'], ['host', 'Host'],
-    ['alerts', 'Alerts'], ['identity', 'Identity'], ['agent', 'Agent'],
+    ['alerts', 'Alerts'], ['identity', 'Identity'], ['logs', 'Logs'], ['agent', 'Agent'],
   ];
   const badges = {}; // tab -> count element
   let tabIndicator = null;
@@ -411,6 +411,12 @@
     identity: () => navIcon([
       svg('circle', Object.assign({ cx: 10, cy: 6.5, r: 3.1 }, STROKE)),
       svg('path', Object.assign({ d: 'M3.7 17c0-4.3 3-6.7 6.3-6.7s6.3 2.4 6.3 6.7' }, STROKE)),
+    ]),
+    // Logs: three lines of differing length -- a log listing.
+    logs: () => navIcon([
+      svg('line', Object.assign({ x1: 4, y1: 6, x2: 16, y2: 6 }, STROKE)),
+      svg('line', Object.assign({ x1: 4, y1: 10, x2: 12, y2: 10 }, STROKE)),
+      svg('line', Object.assign({ x1: 4, y1: 14, x2: 14.5, y2: 14 }, STROKE)),
     ]),
     // Agent: a shield with a check -- its own safety posture, self-reported.
     agent: () => navIcon([
@@ -1319,6 +1325,7 @@
         el('details', { class: 'rule' }, [
           el('summary', {}, [PNMA.severityChip(r.severity), el('span', { class: 'rule__name', text: ' ' + r.name }),
                              r.mitre_id ? el('span', { class: 'rule__mitre', text: r.mitre_id }) : null]),
+          r.requires ? el('p', { class: 'rule__requires' }, [el('strong', { text: 'Reads: ' }), r.requires]) : null,
           el('p', { class: 'rule__blind' }, [el('strong', { text: 'Blind spot: ' }), r.blind_spots || 'none stated']),
         ]))));
 
@@ -1336,6 +1343,82 @@
   /* =================================================================== boot */
 
   PNMA.showTab = showTab;
+  /* =================================================================== logs */
+
+  /* The log explorer. One query (/api/events) with the filters the analyst
+   * actually turns: time range, kind, device, free text, and whether the
+   * agent's own rows are shown. Tails live: on every change notification the
+   * newest rows are re-read (cheap -- the cursor is `since`) and prepended
+   * through the same eventLog component the drawer uses, so the two views
+   * cannot drift apart. Row strings reach the DOM via el(): the mask holds. */
+  const logsState = { hours: 24, kinds: [], device: '', q: '', agent: true, log: null, newest: 0 };
+  function logsQuery() {
+    const p = new URLSearchParams();
+    p.set('hours', String(logsState.hours)); p.set('limit', '500');
+    if (logsState.kinds.length) p.set('kinds', logsState.kinds.join(','));
+    if (logsState.device) p.set('device_id', logsState.device);
+    if (logsState.q) p.set('q', logsState.q);
+    if (!logsState.agent) p.set('agent', 'false');
+    return '/api/events?' + p.toString();
+  }
+  async function loadLogs() {
+    const body = document.getElementById('logs-body');
+    if (!body) return;
+    try {
+      const [data, devs] = await Promise.all([getJSON(logsQuery()), getJSON('/api/devices')]);
+      const events = data.events || [];
+      logsState.newest = events.length ? Math.max(...events.map((e) => e.ts)) : 0;
+      clear(body);
+      const bar = el('div', { class: 'logs__bar' });
+      const range = el('select', { class: 'logs__select', 'aria-label': 'time range' },
+        [[1, 'last hour'], [6, '6 hours'], [24, '24 hours'], [168, '7 days']].map(([h, t]) =>
+          el('option', { value: String(h), text: t, selected: h === logsState.hours ? 'selected' : null })));
+      range.value = String(logsState.hours);
+      range.addEventListener('change', () => { logsState.hours = Number(range.value); loadLogs(); });
+      const device = el('select', { class: 'logs__select', 'aria-label': 'device' },
+        [el('option', { value: '', text: 'any device' })].concat((devs.devices || []).map((d) =>
+          el('option', { value: d.device_id, text: d.label || d.hostname || d.ip || d.device_id }))));
+      device.value = logsState.device;
+      device.addEventListener('change', () => { logsState.device = device.value; loadLogs(); });
+      const q = el('input', { class: 'logs__search', type: 'search', placeholder: 'search summary, address, detail…', value: logsState.q });
+      let t = null;
+      q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { logsState.q = q.value.trim(); loadLogs(); }, 350); });
+      const agentBtn = el('button', { class: 'triage__chip' + (logsState.agent ? '' : ' is-on'), type: 'button', text: 'hide PNMA\u2019s own rows',
+        title: 'Rows the agent caused itself: its scans answering, its pings, its own scripts, its deliveries.' });
+      agentBtn.addEventListener('click', () => { logsState.agent = !logsState.agent; loadLogs(); });
+      bar.appendChild(range); bar.appendChild(device); bar.appendChild(q); bar.appendChild(agentBtn);
+      body.appendChild(bar);
+      const kinds = el('div', { class: 'logs__kinds' }, (data.kinds || []).map((k) => {
+        const on = logsState.kinds.includes(k);
+        const b = el('button', { class: 'evlog__chip evlog__chip--' + k, type: 'button', 'aria-pressed': on ? 'true' : 'false', text: k.replace('_', ' ') });
+        b.addEventListener('click', () => {
+          logsState.kinds = on ? logsState.kinds.filter((x) => x !== k) : logsState.kinds.concat([k]);
+          loadLogs();
+        });
+        return b;
+      }));
+      body.appendChild(kinds);
+      body.appendChild(el('p', { class: 'logs__count', text: events.length + ' ' + PNMA.plural(events.length, 'row') + (events.length >= 500 ? ' (capped at 500 -- narrow the filters)' : '') + ', newest first' }));
+      logsState.log = PNMA.eventLog(events, { order: 'desc', bar: false, emptyText: 'Nothing recorded for these filters.' });
+      body.appendChild(logsState.log);
+    } catch (err) { fail(body, 'the log', err); }
+  }
+  // Live tail: on a change, re-read only what is newer than what we have and
+  // merge it in front. Hidden while the Logs tab is not showing.
+  PNMA.onChange(async () => {
+    const sec = document.getElementById('logs');
+    if (!sec || !sec.classList.contains('is-active') || !logsState.log) return;
+    try {
+      const url = logsQuery() + '&since=' + encodeURIComponent(String(logsState.newest || 0));
+      const data = await getJSON(url);
+      const fresh = (data.events || []).filter((e) => e.ts > logsState.newest);
+      if (!fresh.length) return;
+      logsState.newest = Math.max(...fresh.map((e) => e.ts));
+      const have = logsState.log.rows ? logsState.log.rows : null;
+      logsState.log.refresh(fresh.concat(logsState.log.events || []));
+    } catch (e) { /* the next full load will catch up */ }
+  });
+
   PNMA.openDeviceSheet = openSheet;
   document.addEventListener('DOMContentLoaded', () => {
     buildTabs();
@@ -1344,7 +1427,7 @@
       for (const x of d.devices || []) PNMA.learnName(x.hostname);
       for (const x of s.sensors || []) PNMA.learnName(x.hostname);
     }).catch(() => { /* the gate or a dead API; the panels report that themselves */ });
-    loadOverview(); loadMap(); loadActivity(); loadAttack(); loadIdentity(); loadAgent();
+    loadOverview(); loadMap(); loadActivity(); loadAttack(); loadIdentity(); loadAgent(); loadLogs();
     every(loadOverview, 60000);
     every(loadMap, 60000);
     every(loadActivity, 60000);
