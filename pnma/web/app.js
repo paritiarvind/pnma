@@ -824,47 +824,74 @@ function deviceLabelFor(deviceId) {
  * inside. A single alert stays a plain row -- a group of one is just noise.
  * Order is preserved (open first, severity inside), so a story sits where
  * its worst alert would have. */
+/* Which thing an alert is about, as the reader names it. A device; this
+ * computer for host findings; an account for identity findings; the
+ * gateway for the binding rules; otherwise the rule itself. */
+const HOST_RULES = new Set(['host_posture', 'control_disabled', 'unmeasured_control', 'suspicious_powershell',
+  'service_installed', 'autorun_changed', 'software_flagged', 'hidden_dir_created', 'notable_connection',
+  'log_cleared', 'upload_spike', 'collector_heartbeat']);
+const IDENTITY_RULES = new Set(['identity_posture', 'identity_unreviewed']);
+function storySubject(alert) {
+  if (alert.device_id) {
+    // Rule titles lead with the device's name ("Smart Plug: ..."), which is
+    // the right fallback when the device list has not arrived yet.
+    const fromTitle = /^([^:]{2,40}):\s/.exec(alert.title || '');
+    const label = deviceLabelFor(alert.device_id) || (fromTitle ? fromTitle[1] : null);
+    return { key: 'device:' + alert.device_id, name: label || 'a device', kind: 'device', device_id: alert.device_id };
+  }
+  if (HOST_RULES.has(alert.rule_id)) return { key: 'host', name: 'This computer', kind: 'host' };
+  if (IDENTITY_RULES.has(alert.rule_id)) {
+    const acct = (alert.evidence && (alert.evidence.account_label || alert.evidence.account_id)) || 'an account';
+    const label = (alert.title || '').split(':')[0] || acct;
+    return { key: 'account:' + acct, name: label, kind: 'account' };
+  }
+  if (alert.rule_id === 'arp_spoof') return { key: 'gateway', name: 'The gateway', kind: 'device' };
+  if (alert.rule_id === 'honeypot_hit') return { key: 'honeypot', name: 'The honeypot', kind: 'sensor' };
+  return { key: 'rule:' + alert.rule_id, name: RULE_STORY[alert.rule_id] || (alert.rule_id || '').replace(/_/g, ' '), kind: 'rule' };
+}
+
+/* Same status, same subject, two or more alerts: one story row with the
+ * alerts inside -- "what is wrong with the TV", not "which rule fired". A
+ * story sits where its worst alert would have; a group of one stays a row. */
 function storyRows(sorted, onOpen) {
-  // Group by status + rule across severities; a story sits where its worst
-  // alert would have (first occurrence in the sorted list), so a rule with
-  // one critical and two mediums is one story at the critical position.
   const groups = new Map();
   for (const a of sorted) {
-    const key = a.status + '|' + a.rule_id;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(a);
+    const subj = storySubject(a);
+    const key = a.status + '|' + subj.key;
+    if (!groups.has(key)) groups.set(key, { subj, run: [] });
+    groups.get(key).run.push(a);
   }
   const out = [];
   const done = new Set();
   for (const a of sorted) {
-    const key = a.status + '|' + a.rule_id;
+    const key = a.status + '|' + storySubject(a).key;
     if (done.has(key)) continue;
     done.add(key);
-    const run = groups.get(key);
-    if (run.length < 2) { out.push(alertRow(a, onOpen)); continue; }
+    const { subj, run } = groups.get(key);
+    if (run.length < 2) { out.push(alertRow(a, onOpen, subj)); continue; }
     const worst = run[0].severity;
-    const devices = new Set(run.map((x) => x.device_id ? (deviceLabelFor(x.device_id) || x.device_id) : null).filter(Boolean));
     const sevs = {};
     run.forEach((x) => { sevs[x.severity] = (sevs[x.severity] || 0) + 1; });
     const mix = Object.keys(sevs).length > 1 ? Object.keys(sevs).map((k) => sevs[k] + ' ' + k).join(', ') : null;
+    const rules = Array.from(new Set(run.map((x) => x.rule_id)));
     out.push(el('details', {
-      class: 'story story--' + worst, 'data-rule': a.rule_id,
+      class: 'story story--' + worst + ' story--' + subj.kind, 'data-subject': subj.key,
       open: (worst === 'critical' || worst === 'high') && a.status === 'open' ? 'open' : null,
     }, [
       el('summary', {}, [
         el('span', { class: 'story__count', text: String(run.length) }),
         el('span', {}, [
-          el('span', { class: 'story__name', text: RULE_STORY[a.rule_id] || (a.rule_id || '').replace(/_/g, ' ') }),
+          el('span', { class: 'story__name', text: subj.name }),
           el('span', { class: 'story__meta' }, [
             severityChip(worst),
             mix ? el('span', { text: mix }) : null,
-            devices.size ? el('span', { text: devices.size === 1 ? Array.from(devices)[0] : devices.size + ' devices' }) : null,
+            el('span', { text: rules.length === 1 ? (RULE_STORY[rules[0]] || rules[0].replace(/_/g, ' ')) : rules.length + ' different rules' }),
             a.status !== 'open' ? el('span', { class: 'badge', text: a.status }) : null,
           ]),
         ]),
-        el('span', { class: 'story__chev', text: '›' }),
+        el('span', { class: 'story__chev', text: '\u203a' }),
       ]),
-      el('div', { class: 'story__rows' }, run.map((x) => alertRow(x, onOpen))),
+      el('div', { class: 'story__rows' }, run.map((x) => alertRow(x, onOpen, subj))),
     ]));
   }
   return out;
@@ -898,10 +925,10 @@ const RULE_STORY = {
   collector_heartbeat: 'The collector stopped reporting',
 };
 
-function alertRow(alert, onOpen) {
+function alertRow(alert, onOpen, subj) {
   const sev = SEVERITIES[alert.severity] ? alert.severity : 'low';
   const folded = foldedRules(alert);
-  const device = alert.device_id ? deviceLabelFor(alert.device_id) : null;
+  const device = alert.device_id && !(subj && subj.kind === 'device') ? deviceLabelFor(alert.device_id) : null;
   const row = el('button', {
     class: 'alertrow alertrow--' + sev + (alert.status !== 'open' ? ' alertrow--' + alert.status : ''),
     type: 'button', 'data-anchor': 'alert:' + alert.id, 'data-status': alert.status, 'data-severity': sev, 'data-mitre': alert.mitre_id || '',
@@ -911,7 +938,7 @@ function alertRow(alert, onOpen) {
       el('span', { class: 'alertrow__title', text: alert.title || alert.rule_id }),
       el('span', { class: 'alertrow__meta' }, [
         device ? el('span', { text: device }) : null,
-        el('span', { text: (alert.rule_id || '').replace(/_/g, ' ') }),
+        el('span', { text: RULE_STORY[alert.rule_id] || (alert.rule_id || '').replace(/_/g, ' ') }),
         folded.length ? el('span', { text: '+' + folded.length + ' ' + plural(folded.length, 'rule') }) : null,
         alert.count > 1 ? el('span', { text: 'seen x' + alert.count }) : null,
       ]),
@@ -2114,7 +2141,10 @@ async function alertAction(id, action, buttons) {
   }
 }
 
-function loadAlerts(force) {
+async function loadAlerts(force) {
+  // Stories are named after devices; make sure the device list is here
+  // before the first alert render, or the story reads as a raw device id.
+  if (!lastDevicesPayload) { try { await loadDevices(); } catch (e) { /* the panel reports it */ } }
   return loadPanel({
     elementId: 'alerts-body',
     // Every status, not just open: see the action table in `alertCard`. The
