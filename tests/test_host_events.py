@@ -77,7 +77,7 @@ def test_classify_script_block_ignores_windows_boilerplate_and_scores_combos():
 @pytest.mark.parametrize("conn,expect_tags,expect_sev", [
     ({"process": "chrome.exe", "raddr": "142.250.1.1", "rport": 443}, set(), None),
     ({"process": "chrome.exe", "raddr": "192.168.0.5", "rport": 8443}, set(), None),        # LAN: ignored
-    ({"process": "chrome.exe", "raddr": "100.99.171.58", "rport": 8787}, set(), None),      # tailnet: ignored
+    ({"process": "chrome.exe", "raddr": "100.100.7.9", "rport": 8787}, set(), None),      # tailnet: ignored
     ({"process": "claude.exe", "path": "C:\\Users\\x\\AppData\\Local\\AnthropicClaude\\claude.exe", "raddr": "34.1.1.1", "rport": 443},
      {"user_writable_binary"}, None),                                                       # Electron on 443: a tag, not a finding
     ({"process": "powershell.exe", "raddr": "45.13.7.22", "rport": 8443}, {"script_host_network"}, "high"),   # 8443 is common; the process is the finding
