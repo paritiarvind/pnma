@@ -200,7 +200,7 @@ BASELINES: dict[DeviceClass, Baseline] = {
             7676: "Samsung remote control",
             8080: "Vendor control API",
         },
-        tolerated={9080: "Vendor remote/control service", 3000: "Vendor app service"},
+        tolerated={9080: "Vendor remote/control service", 3000: "Vendor app service", 8443: "Cast v2 over TLS"},
         forbidden={
             5555: "ADB over network on an Android TV -- unauthenticated shell access",
             23: "Telnet",
@@ -221,6 +221,7 @@ BASELINES: dict[DeviceClass, Baseline] = {
             8009: "Cast protocol",
             1900: "UPnP/SSDP discovery",
         },
+        tolerated={8443: "Cast v2 over TLS", 9000: "vendor app service"},
         forbidden={
             5555: "ADB over network -- unauthenticated shell access",
             23: "Telnet",
@@ -404,6 +405,7 @@ _VENDOR_HINTS: list[tuple[str, DeviceClass]] = [
     ("canon", DeviceClass.PRINTER), ("epson", DeviceClass.PRINTER),
     ("lexmark", DeviceClass.PRINTER), ("wistron neweb", DeviceClass.PRINTER),
     ("roku", DeviceClass.STREAMING), ("azurewave", DeviceClass.STREAMING),
+    ("gaoshengda", DeviceClass.STREAMING), ("skyworth", DeviceClass.STREAMING),
     ("nest", DeviceClass.SMART_HOME_HUB),
     ("espressif", DeviceClass.IOT_SENSOR), ("tuya", DeviceClass.IOT_SENSOR),
     ("shelly", DeviceClass.IOT_SENSOR), ("sonoff", DeviceClass.IOT_SENSOR),
@@ -459,6 +461,8 @@ _PORT_HINTS: dict[int, DeviceClass] = {
     9100: DeviceClass.PRINTER,
     515: DeviceClass.PRINTER,
     631: DeviceClass.PRINTER,
+    8008: DeviceClass.STREAMING,   # Google Cast / DIAL discovery
+    8009: DeviceClass.STREAMING,   # Cast protocol
     8060: DeviceClass.STREAMING,
     3074: DeviceClass.GAME_CONSOLE,
     9295: DeviceClass.GAME_CONSOLE,
