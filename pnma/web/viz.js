@@ -789,13 +789,13 @@
     // threshold the outer ring is simply everyone, same as before.
     const TWO_RING_AT = 9;
     const twoRings = others.length >= TWO_RING_AT;
-    const W = 640;
-    // Extra headroom per ring "row" so labels on a crowded outer ring have
-    // somewhere to go without being clipped by the viewBox.
-    const H = twoRings ? 560 : 480;
+    const W = 820;
+    // Outer-ring labels sit outside the ring, radially; the margin is what
+    // they need to stay inside the viewBox.
+    const H = twoRings ? 600 : 520;
     const cx = W / 2, cy = H / 2;
-    const Router = Math.min(W, H) / 2 - 76;
-    const Rinner = Router * 0.56;
+    const Router = Math.min(W, H) / 2 - 70;
+    const Rinner = Router * 0.55;
 
     // Interleaved, not split into two contiguous halves: alternating
     // assignment spreads related devices (adjacent in the API's own
@@ -813,7 +813,7 @@
     if (twoRings) root.appendChild(svg('circle', { cx, cy, r: Rinner, class: 'netmap__orbit' }));
 
     const now = Date.now() / 1000;
-    function place(list, R, angleOffset) {
+    function place(list, R, angleOffset, labelOutward) {
       list.forEach((d, i) => {
         const a = (i / list.length) * 2 * Math.PI - Math.PI / 2 + angleOffset;
         const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
@@ -822,14 +822,16 @@
           x1: cx, y1: cy, x2: x, y2: y,
           class: 'netmap__edge' + (online ? '' : ' netmap__edge--dim'),
         }));
-        root.appendChild(node(d, x, y, online, false));
+        root.appendChild(node(d, x, y, online, false, labelOutward ? a : null));
       });
     }
     // The inner ring is rotated a half-step relative to the outer one so a
     // spoke on one ring falls in the gap between two spokes on the other,
     // rather than lining up behind them from the gateway's point of view.
-    place(outer, Router, 0);
-    if (inner.length) place(inner, Rinner, Math.PI / outer.length);
+    // Outer-ring labels point away from the centre so neighbours never
+    // share a baseline; inner-ring labels hang below their node as before.
+    place(outer, Router, 0, true);
+    if (inner.length) place(inner, Rinner, Math.PI / outer.length, false);
 
     root.appendChild(node(gw, cx, cy, now - gw.last_seen < 900, true));
     body.appendChild(root);
@@ -839,7 +841,7 @@
       // "this needs a decision", and a third colour pairing for the same
       // idea on one panel is exactly the "parallel colours" style.css's own
       // token comment warns against.
-      key('ring: trusted', 'var(--ok)'), key('ring: untrusted', 'var(--finding)'),
+      key('ring: yours (trusted)', 'var(--lamp)'), key('ring: undecided', 'var(--accent)'),
       key('fill: online', 'var(--bg-inset)'), key('badge: open ports', 'var(--fg-muted)'),
       el('span', { text: 'dashed edge: not seen in 15 min' }),
     ]));
@@ -849,20 +851,44 @@
     }
   }
 
-  function node(d, x, y, online, isGw) {
+  /* A vendor string as a name: "Apple, Inc." is a device called Apple. */
+  function shortVendor(v) { return (v || '').replace(/,?\s*(inc|ltd|llc|co|corp|corporation|gmbh|technology|technologies|systems|electronics)\.?(\s|$).*/i, '').trim(); }
+
+  function node(d, x, y, online, isGw, angle) {
     const ports = (d.open_ports || []).length;
     const alerts = d.open_alerts || 0;
     const r = isGw ? 30 : 22;
-    const name = d.label || d.hostname || d.vendor || d.ip || d.mac || '?';
-    const g = svg('g', { class: 'netnode' + (online ? '' : ' netnode--offline'), tabindex: 0, role: 'button' }, [
+    const name = d.label || d.hostname || shortVendor(d.vendor) || d.ip || d.mac || '?';
+    const addr = d.ip ? d.ip : (d.mac_type === 'local' ? 'randomised MAC' : '');
+    // Trust is "yours" (warm) or "undecided" (cool). Neither is a severity:
+    // the red dot and dashed halo say "has open alerts" independently.
+    const ring = d.trusted ? 'var(--lamp)' : 'var(--accent)';
+    let labels;
+    if (angle == null) {
+      labels = [
+        svgText(x, y + r + 16, truncate(name, 18), { class: 'netnode__name', 'text-anchor': 'middle' }),
+        svgText(x, y + r + 29, addr, { class: 'netnode__addr', 'text-anchor': 'middle' }),
+      ];
+    } else {
+      // Radially outward from the node. Left half anchors end, right half
+      // start, the poles centre; the two lines stack away from the node.
+      const c = Math.cos(angle), sn = Math.sin(angle);
+      const anchor = c > 0.35 ? 'start' : c < -0.35 ? 'end' : 'middle';
+      const lx = x + (r + 10) * c, ly = y + (r + 10) * sn;
+      const dy = anchor === 'middle' ? (sn > 0 ? 12 : -18) : 0;
+      labels = [
+        svgText(lx, ly + dy + (anchor === 'middle' ? 0 : -1), truncate(name, 22), { class: 'netnode__name', 'text-anchor': anchor }),
+        svgText(lx, ly + dy + 13, addr, { class: 'netnode__addr', 'text-anchor': anchor }),
+      ];
+    }
+    const g = svg('g', { class: 'netnode' + (online ? '' : ' netnode--offline') + (d.trusted ? ' netnode--trusted' : ''), tabindex: 0, role: 'button' }, [
       title(name + ' — ' + (d.ip || 'no ip') + ' — ' + (d.vendor || 'vendor unknown') +
-            ' — ' + ports + ' open ' + plural(ports, 'port') + (alerts ? ' — ' + alerts + ' open alerts' : '')),
+            ' — ' + ports + ' open ' + plural(ports, 'port') + (alerts ? ' — ' + alerts + ' open alerts' : '') +
+            (d.trusted ? ' — trusted' : ' — trust not decided')),
       svg('circle', { cx: x, cy: y, r: r + 6, class: 'netnode__halo' + (alerts ? ' netnode__halo--alert' : '') }),
-      svg('circle', { cx: x, cy: y, r, class: 'netnode__body', stroke: d.trusted ? 'var(--ok)' : 'var(--finding)' }),
+      svg('circle', { cx: x, cy: y, r, class: 'netnode__body', stroke: ring }),
       svgText(x, y + 5, isGw ? '⌂' : glyphFor(d.device_class), { class: 'netnode__glyph', 'text-anchor': 'middle' }),
-      svgText(x, y + r + 16, truncate(name, 16), { class: 'netnode__name', 'text-anchor': 'middle' }),
-      svgText(x, y + r + 29, d.ip ? d.ip : (d.mac_type === 'local' ? 'randomised MAC' : ''), { class: 'netnode__addr', 'text-anchor': 'middle' }),
-    ]);
+    ].concat(labels));
     if (ports) {
       g.appendChild(svg('circle', { cx: x + r - 4, cy: y - r + 4, r: 10, class: 'netnode__badge' }));
       g.appendChild(svgText(x + r - 4, y - r + 8, ports, { class: 'netnode__badgetext', 'text-anchor': 'middle' }));

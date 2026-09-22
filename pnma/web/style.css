@@ -1426,7 +1426,7 @@ section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cub
 
 /* ---- network map ---------------------------------------------------------- */
 
-.netmap { width: 100%; height: auto; max-height: 560px; display: block; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-raised); }
+.netmap { width: 100%; height: auto; max-height: 640px; display: block; background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-raised); }
 .netmap__orbit { fill: none; stroke: var(--line); stroke-width: 1; }
 .netmap__edge { stroke: var(--line-strong); stroke-width: 1.5; }
 .netmap__edge--dim { stroke: var(--line); stroke-dasharray: 3 4; }
@@ -1447,7 +1447,8 @@ section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cub
 .netnode--offline .netnode__body { fill: var(--bg-sunken); stroke-dasharray: 4 3; }
 .netnode__glyph { fill: var(--fg); font-size: 18px; }
 .netnode--offline .netnode__glyph { fill: var(--fg-dim); }
-.netnode__name { fill: var(--fg); font-size: 11px; font-weight: 600; }
+.netnode__name { fill: var(--fg); font-size: 12px; font-weight: 600; font-family: var(--display); letter-spacing: 0.01em; }
+.netnode--trusted .netnode__body { fill: var(--lamp-bg); }
 .netnode__addr { fill: var(--fg-dim); font-size: 10px; font-family: var(--mono); }
 .netnode__badge { fill: var(--accent); }
 .netnode__badgetext { fill: #06121f; font-size: 11px; font-weight: 700; font-family: var(--mono); }
