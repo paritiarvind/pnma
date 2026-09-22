@@ -1447,6 +1447,21 @@ function alertDetail(alert, onAction) {
     buttons.push(b);
   }
   if (buttons.length) card.appendChild(el('div', { class: 'sheet__actions' }, buttons));
+  // Two columns on a wide screen: the story (what/why/what to do) on the
+  // left, the record (telemetry, investigation log) on the right. Grouped
+  // here rather than by CSS grid placement so the columns flow naturally.
+  const head = card.querySelector('.sheet__head');
+  const main = el('div', { class: 'alertdetail__main' });
+  const aside = el('div', { class: 'alertdetail__aside' });
+  const tail = [];
+  Array.from(card.children).forEach((c) => {
+    if (c === head) return;
+    if (c.classList.contains('alertdetail__sec--tele') || c.classList.contains('alertdetail__sec--investigate')) aside.appendChild(c);
+    else if (c.classList.contains('alert__meta') || c.classList.contains('alertdetail__help') || c.classList.contains('sheet__actions')) tail.push(c);
+    else main.appendChild(c);
+  });
+  card.appendChild(el('div', { class: 'alertdetail__cols' }, [main, aside]));
+  tail.forEach((c) => card.appendChild(c));
   return card;
 }
 

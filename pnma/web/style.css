@@ -1,3 +1,7 @@
+@font-face { font-family: "Bricolage Grotesque"; src: url("/fonts/BricolageGrotesque.woff2") format("woff2"); font-weight: 200 800; font-display: swap; }
+@font-face { font-family: "Fraunces"; src: url("/fonts/Fraunces.woff2") format("woff2"); font-weight: 200 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/JetBrainsMono.woff2") format("woff2"); font-weight: 200 800; font-display: swap; }
+
 /* PNMA dashboard styling.
  *
  * There is no build step and no framework here on purpose. `pnma/api/app.py`
@@ -17,29 +21,29 @@
 :root {
   /* Surfaces, darkest to lightest. Dark ground because this is a monitoring
    * view that sits open on a second screen for hours. */
-  --bg:            #0e1116;
-  --bg-sunken:     #0a0d11;
+  --bg:            #100e0d;
+  --bg-sunken:     #0b0a09;
   /* One step lighter than the original #161b22/#1c232c pair, with a touch
    * more blue in the mix rather than flat neutral grey -- part of the same
    * "airier, not a dense grey wall" brief as the radius and spacing bumps
    * below. Still comfortably inside a dark theme; this is a few percent of
    * lightness, not a light-mode surface. */
-  --bg-raised:     #171e29;
-  --bg-inset:      #202938;
+  --bg-raised:     #181513;
+  --bg-inset:      #211d1a;
 
-  --fg:            #e6edf3;
-  --fg-muted:      #9aa7b4;
-  --fg-dim:        #6b7784;
+  --fg:            #f3ede7;
+  --fg-muted:      #a69c93;
+  --fg-dim:        #736a62;
 
-  --line:          #262d36;
-  --line-strong:   #39424e;
+  --line:          #2a2521;
+  --line-strong:   #3d3630;
 
-  --accent:        #58a6ff;
+  --accent:        #e8491d;
   /* Warm: what is yours. Trusted devices, the operator's own actions, the
    * agent's own rows. The one warm colour on a cold page, so "mine" reads at
    * a glance without borrowing a severity hue. */
-  --lamp:          #f2b155;
-  --lamp-bg:       rgba(242, 177, 85, 0.12);
+  --lamp:          #e8491d;
+  --lamp-bg:       rgba(232, 73, 29, 0.14);
 
   /* Decorative wayfinding colour for the six nav rows only -- never used for
    * a check's outcome or a severity. This is the "categorical, not state"
@@ -50,13 +54,13 @@
    * ~140°, unknown-violet ~262°) so a colourful sidebar never gets mistaken
    * for a fifth state. Icon shape and the label text still carry the actual
    * meaning -- colour here is pure wayfinding, same as a highlighter. */
-  --nav-overview:  #3987e5;
-  --nav-network:   #22b8cf;
-  --nav-host:      #e0793c;
-  --nav-alerts:    #ec4899;
-  --nav-identity:  #c98500;
-  --nav-agent:     #7c88ff;
-  --nav-logs:      #94a3b8;
+  --nav-overview:  #e8491d;
+  --nav-network:   #d98b5f;
+  --nav-host:      #c9a27a;
+  --nav-alerts:    #f26a4b;
+  --nav-identity:  #b8a48f;
+  --nav-agent:     #9c9186;
+  --nav-logs:      #a69c93;
 
   /* State palette. These three are load-bearing: they are the only encoding of
    * a check's outcome, and they must stay mutually distinguishable. Never
@@ -103,10 +107,10 @@
    * hue at the top of a red scale produces two colours nobody can rank at a
    * glance. Critical is the only filled chip on the page, so it is the only
    * thing that reads as filled -- that is the whole signal. */
-  --sev-critical:    #da3633;
+  --sev-critical:    #e5484d;
   --sev-critical-fg: #ffffff;
-  --sev-high:        #f85149;
-  --sev-medium:      #d29922;
+  --sev-high:        #ff8a3d;
+  --sev-medium:      #e9c46a;
   --sev-low:         #8b949e;
 
   /* Spacing scale. Four steps is enough; more invites arbitrary values.
@@ -131,12 +135,10 @@
    * runs on); SF Compact / Avenir Next Condensed are the phone fallbacks.
    * Used for the numbers and titles only -- the instrument-panel voice --
    * and nowhere in running text. */
-  --display: "Bahnschrift", "Bahnschrift SemiBold", "SF Compact Display", "Avenir Next Condensed",
-             "Roboto Condensed", "Segoe UI Variable Display", "Segoe UI", sans-serif;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-          sans-serif;
+  --display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font: "Bricolage Grotesque", "Segoe UI", Helvetica, Arial, sans-serif;
   /* System monospace only. A webfont would need a fourth route. */
-  --mono: "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
 
   /* Elevation. Two layers, not one: a tight contact shadow for definition at
    * the edge plus a softer, wider ambient shadow for actual depth -- the
@@ -186,6 +188,12 @@
 [hidden] { display: none !important; }
 
 body {
+  font-weight: 300;
+  background-image:
+    radial-gradient(ellipse 70% 40% at 18% -8%, rgba(232, 73, 29, 0.22), transparent 60%),
+    radial-gradient(ellipse 50% 30% at 85% -5%, rgba(232, 73, 29, 0.08), transparent 60%),
+    linear-gradient(180deg, #171210 0%, var(--bg) 42%);
+  background-attachment: fixed;
   margin: 0;
   overflow-x: hidden;
   color: var(--fg);
@@ -240,10 +248,11 @@ code, .mono {
 }
 
 .masthead__title {
-  font-family: var(--display);
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-family: var(--font);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   line-height: 1.1;
 }
 
@@ -363,7 +372,7 @@ code, .mono {
 }
 
 .section__title {
-  font-family: var(--display); font-size: 21px; font-weight: 600; letter-spacing: 0.005em; line-height: 1.15;
+  font-family: var(--font); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15;
 }
 
 .section__note {
@@ -629,9 +638,8 @@ input:focus-visible,
 @media (prefers-reduced-motion: reduce) { .cat-group__chev { transition: none; } }
 
 .cat-group__name {
-  font-size: 13px;
-  font-weight: 600;
-  font-family: var(--display); font-size: 15px;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .cat-group__counts {
@@ -1370,18 +1378,22 @@ section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cub
 .rings { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--s3); margin-bottom: var(--s3); }
 .ringcard {
   background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: var(--s3); display: flex; flex-direction: column; align-items: center; gap: var(--s1);
-  box-shadow: var(--shadow-raised);
+  padding: var(--s3) var(--s3) var(--s2); display: grid; grid-template-columns: auto 1fr; column-gap: var(--s3); align-items: center;
+  box-shadow: var(--shadow-raised); text-align: left;
 }
+.ringcard > .ring { grid-row: 1 / span 3; }
+.ringcard__label { font-size: 15px; font-weight: 700; }
+.ringcard__sub { text-align: left; }
+.ring__legend { justify-content: flex-start; }
 /* Sized via width/height only, never font-size or stroke-width: the SVG's
  * own viewBox scaling already grows the score, the track and the arcs
  * together in proportion. Overriding font-size here on top of that would
  * scale the number twice and throw it out of proportion with its own ring. */
-.ring { width: 132px; height: 132px; }
-@media (min-width: 900px) { .ring { width: 152px; height: 152px; } }
+.ring { width: 108px; height: 108px; }
+@media (min-width: 900px) { .ring { width: 120px; height: 120px; } }
 .ring__track { fill: none; stroke: var(--bg-inset); stroke-width: 9; }
 .ring__arc { fill: none; stroke-width: 9; transition: stroke-dasharray 400ms ease; }
-.ring__score { fill: var(--fg); font-size: 32px; font-weight: 600; letter-spacing: 0; font-family: var(--display); }
+.ring__score { fill: var(--fg); font-size: 30px; font-weight: 300; letter-spacing: -0.01em; font-family: var(--font); }
 .ring__of { fill: var(--fg-dim); font-size: 10px; }
 .ringcard__label { font-weight: 600; }
 .ringcard__sub { color: var(--fg-dim); font-size: 12px; text-align: center; }
@@ -1401,7 +1413,7 @@ section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cub
 .tile--warn { border-left-color: var(--warn); }
 .tile--bad { border-left-color: var(--finding); }
 .tile--unknown { border-left-color: var(--unknown); }
-.tile__value { font-size: var(--fs-tile); font-weight: 600; letter-spacing: 0; font-family: var(--display); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tile__value { font-size: 34px; font-weight: 300; letter-spacing: -0.01em; font-family: var(--font); line-height: 1.05; font-variant-numeric: tabular-nums; }
 .tile__label { color: var(--fg-muted); font-size: 12px; }
 .tile__foot { color: var(--fg-dim); font-size: 11px; margin-top: 4px; }
 
@@ -1447,7 +1459,7 @@ section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cub
 .netnode--offline .netnode__body { fill: var(--bg-sunken); stroke-dasharray: 4 3; }
 .netnode__glyph { fill: var(--fg); font-size: 18px; }
 .netnode--offline .netnode__glyph { fill: var(--fg-dim); }
-.netnode__name { fill: var(--fg); font-size: 12px; font-weight: 600; font-family: var(--display); letter-spacing: 0.01em; }
+.netnode__name { fill: var(--fg); font-size: 12px; font-weight: 700; font-family: var(--font); }
 .netnode--trusted .netnode__body { fill: var(--lamp-bg); }
 .netnode__addr { fill: var(--fg-dim); font-size: 10px; font-family: var(--mono); }
 .netnode__badge { fill: var(--accent); }
@@ -1492,7 +1504,7 @@ section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cub
 
 .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
 @media (max-width: 800px) { .twocol { grid-template-columns: 1fr; } }
-.sub { font-family: var(--display); font-size: 16px; font-weight: 600; color: var(--fg); margin: var(--s4) 0 var(--s2); text-transform: none;  }
+.sub { font-family: var(--font); font-size: 15px; font-weight: 700; color: var(--fg); margin: var(--s4) 0 var(--s2); text-transform: none;  }
 .hbars { display: grid; gap: 6px; }
 .hbar { display: grid; grid-template-columns: 140px 1fr auto; gap: var(--s2); align-items: center; font-size: 12px; }
 .hbar__label { color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1697,10 +1709,10 @@ button.ringcard:focus-visible, button.tile:focus-visible, .alertrow:focus-visibl
 
 .sheet__card--wide { max-width: 860px; }
 .alertdetail__head { min-width: 0; }
-.alertdetail__title { font-family: var(--display); font-size: 24px; font-weight: 600; line-height: 1.15; margin: var(--s1) 0 4px; overflow-wrap: anywhere; }
+.alertdetail__title { font-family: var(--font); font-size: 24px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; margin: var(--s1) 0 4px; overflow-wrap: anywhere; }
 .alertdetail__urgency { margin: 0; color: var(--fg-muted); font-size: 13px; }
 .alertdetail__sec { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--line); }
-.alertdetail__sec > h4 { margin: 0 0 var(--s1); font-family: var(--display); font-size: 15px; font-weight: 600; color: var(--fg); text-transform: none; letter-spacing: 0; }
+.alertdetail__sec > h4 { margin: 0 0 var(--s1); font-family: var(--font); font-size: 14px; font-weight: 700; color: var(--fg); text-transform: none; letter-spacing: 0; }
 .alertdetail__sec .alert__desc { margin-top: var(--s1); }
 .alertdetail__para + .alertdetail__para { margin-top: var(--s2); }
 .alertdetail__label { font-size: 11px; color: var(--fg-dim); text-transform: none; font-weight: 600; }
@@ -1758,7 +1770,7 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .pb--high .pb__badge { background: rgba(210, 153, 34, 0.15); color: var(--sev-high); }
 .pb--warn .pb__badge { background: rgba(210, 153, 34, 0.15); color: var(--warn); }
 .pb--ok .pb__badge { background: var(--ok-bg); color: var(--ok); }
-.pb__verdict { font-family: var(--display); font-size: 26px; font-weight: 600; line-height: 1.1; }
+.pb__verdict { font-family: var(--display); font-size: 44px; font-weight: 800; line-height: 1; letter-spacing: -0.01em; font-variation-settings: 'opsz' 144, 'SOFT' 30; }
 .pb__summary { color: var(--fg-muted); font-size: 13px; margin-top: 2px; }
 .pb__meta { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .pb__updated { color: var(--fg-dim); font-size: 11px; white-space: nowrap; }
@@ -1844,7 +1856,7 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .evlog__kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--evk, var(--fg-muted)); font-weight: 600; }
 .evlog__src { font-family: var(--mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .evlog__sum { color: var(--fg); overflow-wrap: anywhere; }
-.evlog__count { margin-left: 8px; font-family: var(--mono); font-size: 11px; color: var(--fg-dim); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+.evlog__count { margin-left: 8px; font-family: var(--font); font-weight: 700; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
 .evlog__detail { padding: var(--s1) 10px var(--s2); font-size: 12px; }
 .evlog__detail dd { overflow-wrap: anywhere; }
 .evlog__row > .btn { margin: 0 10px var(--s2); }
@@ -1913,12 +1925,50 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .story--medium { --story: var(--sev-medium); }
 .story--low { --story: var(--sev-low); }
 .story--host .story__name::before, .story--account .story__name::before { content: ''; }
-.story__name { font-family: var(--display); font-size: 17px; font-weight: 600; line-height: 1.15; }
+.story__name { font-family: var(--font); font-size: 16px; font-weight: 700; line-height: 1.15; }
 .story__meta { display: flex; flex-wrap: wrap; gap: var(--s2); font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
-.story__count { font-family: var(--display); font-size: 22px; font-weight: 600; color: var(--fg); min-width: 2.2ch; text-align: right; }
+.story__count { font-family: var(--display); font-size: 26px; font-weight: 800; color: var(--accent); min-width: 2.2ch; text-align: right; }
 .story__chev { color: var(--fg-dim); transition: transform 160ms ease; }
 .story[open] > .story__chev, .story[open] > summary .story__chev { transform: rotate(90deg); }
 .story__rows { display: grid; gap: 4px; padding: 0 var(--s2) var(--s2) var(--s4); }
 .story__rows .alertrow { background: var(--bg); }
 @media (prefers-reduced-motion: reduce) { .story__chev { transition: none; } }
 .pb__chipn { margin-left: 6px; font-family: var(--display); color: var(--fg-muted); }
+
+/* ---- theme: warm charcoal, one vermilion accent ---------------------------- */
+.pb { position: relative; overflow: hidden; }
+.pb::before {
+  content: ''; position: absolute; inset: -40% -10% auto -10%; height: 140%; pointer-events: none;
+  background: radial-gradient(ellipse 45% 55% at 12% 30%, color-mix(in srgb, var(--pb-glow, var(--accent)) 26%, transparent), transparent 70%);
+}
+.pb > * { position: relative; }
+.pb--critical { --pb-glow: var(--sev-critical); }
+.pb--high, .pb--warn { --pb-glow: var(--accent); }
+.pb--ok { --pb-glow: var(--ok); }
+.btn--primary, .pb__all { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; }
+.btn--primary:hover, .pb__all:hover { filter: brightness(1.08); }
+.tabs__tab.is-active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.sev-chip { font-family: var(--font); font-weight: 700; }
+.alertrow { padding: 8px 12px; }
+.alertrow__title { font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) {
+  /* One page-load reveal: the sections rise once, in order. Nothing else moves on its own. */
+  section[data-tab].is-active > .section__head { animation: pnma-rise-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+}
+/* Drawer on a wide screen: the story on the left, the record on the right. */
+.alertdetail__cols { display: grid; grid-template-columns: 1fr; gap: 0 var(--s5); }
+@media (min-width: 1180px) {
+  .sheet__card--wide { max-width: 1180px; }
+  .alertdetail__cols { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; }
+  .alertdetail__aside { position: sticky; top: 0; }
+  .alertdetail__aside > .alertdetail__sec:first-child { border-top: 0; margin-top: var(--s3); }
+}
+/* ---- overview columns ---------------------------------------------------- */
+.overview__cols { display: grid; grid-template-columns: 1fr; gap: var(--s3); }
+@media (min-width: 1100px) { .overview__cols { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: start; } }
+.recent { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s3); box-shadow: var(--shadow-raised); }
+.recent .evlog { margin-top: var(--s2); margin-bottom: var(--s2); }
+.recent .evlog__rows { background: transparent; border: 0; }
+.recent .evlog__row { border-top: 1px solid var(--line); border-left-width: 2px; }
+.recent .evlog__head { grid-template-columns: max-content 1fr; padding: 6px 8px; }
+.recent .evlog__kind, .recent .evlog__src { display: none; }

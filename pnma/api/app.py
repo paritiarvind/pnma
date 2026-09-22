@@ -66,6 +66,10 @@ STATIC_FILES = {
     "/icon.svg": ("icon.svg", "image/svg+xml"),
     "/icon-192.png": ("icon-192.png", "image/png"),
     "/icon-512.png": ("icon-512.png", "image/png"),
+    # Vendored type (OFL): the page must work with no network at all.
+    "/fonts/BricolageGrotesque.woff2": ("fonts/BricolageGrotesque.woff2", "font/woff2"),
+    "/fonts/Fraunces.woff2": ("fonts/Fraunces.woff2", "font/woff2"),
+    "/fonts/JetBrainsMono.woff2": ("fonts/JetBrainsMono.woff2", "font/woff2"),
 }
 
 

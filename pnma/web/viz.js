@@ -667,9 +667,10 @@
       const raw = await Promise.all([
         getRaw('/api/summary'), getRaw('/api/host'), getRaw('/api/identity'),
         getRaw('/api/devices'), getRaw('/api/sensors'), getRaw('/api/alerts?status=open&limit=100'),
+        getRaw('/api/events?hours=24&limit=14&agent=false&kinds=alert,alert_change,observation,host_event,port,availability'),
       ]);
       if (unchanged('overview', raw.map((r) => r.text).join('\u0000'), body.firstChild)) return;
-      const [summary, host, identity, devices, sensors, alertList] = raw.map((r) => r.json);
+      const [summary, host, identity, devices, sensors, alertList, recent] = raw.map((r) => r.json);
       for (const d of devices.devices) PNMA.learnName(d.hostname);
       for (const s of sensors.sensors) PNMA.learnName(s.hostname);
 
@@ -752,7 +753,17 @@
       body.appendChild(postureBanner(summary, alertList.alerts || [], gaps.length, devices.devices));
       body.appendChild(rings);
       body.appendChild(tiles);
-      body.appendChild(gapList);
+      // Recent activity: what the network and the host did in the last day,
+      // without the agent's own rows -- the feed a SOC console opens with,
+      // beside the list of things to fix.
+      const feed = el('div', { class: 'recent' }, [
+        el('h3', { class: 'gaps__title', text: 'Recent activity' }),
+        (recent.events || []).length
+          ? PNMA.eventLog(recent.events, { order: 'desc', bar: false })
+          : el('p', { class: 'placeholder', text: 'Nothing recorded in the last 24 hours that was not the agent itself.' }),
+        (() => { const b = el('button', { class: 'btn', type: 'button', text: 'Open the log' }); b.addEventListener('click', () => showTab('logs')); return b; })(),
+      ]);
+      body.appendChild(el('div', { class: 'overview__cols' }, [gapList, feed]));
 
       setBadge('alerts', alerts.open, (alerts.by_severity || {}).critical || (alerts.by_severity || {}).high ? 'bad' : 'warn');
       setBadge('host', hs.finding + hs.unknown, hs.finding ? 'bad' : 'unknown');
