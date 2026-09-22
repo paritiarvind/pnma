@@ -100,6 +100,6 @@ I'd rather list these than have you find them:
 
 ## Try it
 
-Repo: **[github.com/REPO_PLACEHOLDER](https://github.com/REPO_PLACEHOLDER)**. MIT, Python, no build step for the front end. `pnma seed` gives you a fake network to poke at without touching anything real. Read DISCLAIMER.md before you point it at a network other people use. It means it.
+Repo: **[github.com/paritiarvind/pnma](https://github.com/paritiarvind/pnma)**. MIT, Python, no build step for the front end. `pnma seed` gives you a fake network to poke at without touching anything real. Read DISCLAIMER.md before you point it at a network other people use. It means it.
 
 If you build something like this, take the one rule and leave the rest: **a check that could not run is not a check that passed.** Make it a state, store it, and make your dashboard charge you for it. Everything else in this project followed from that.
