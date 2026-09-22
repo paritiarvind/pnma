@@ -39,7 +39,7 @@ from typing import Any, Iterable
 from .db import Database
 
 KINDS = ("observation", "scan", "alert", "alert_change", "availability",
-         "host_fact", "host_event", "port", "banner", "delivery")
+         "host_fact", "host_event", "router", "port", "banner", "delivery")
 
 # scan_runs.kind values that are the agent talking to the operator, not the
 # network. They get kind="delivery" so the drawer can show "toast shown /
@@ -259,6 +259,33 @@ def _host_events(db: Database, since: float, until: float, *, kinds: set[str] | 
     return out
 
 
+def _router(db: Database, since: float, until: float, *, ips: set[str], macs: set[str],
+            kinds: set[str] | None, limit: int) -> list[dict]:
+    where = ["ts >= ?", "ts <= ?"]
+    params: list[Any] = [since, until]
+    scoped = []
+    if ips:
+        scoped.append("ip IN (%s)" % _marks(len(ips)))
+        params.extend(sorted(ips))
+    if macs:
+        scoped.append("lower(mac) IN (%s)" % _marks(len(macs)))
+        params.extend(sorted(macs))
+    if scoped:
+        where.append("(" + " OR ".join(scoped) + ")")
+    if kinds:
+        where.append("kind IN (%s)" % _marks(len(kinds)))
+        params.extend(sorted(kinds))
+    rows = db.query(
+        "SELECT id, ts, kind, severity, title, ip, mac, line FROM router_events "
+        "WHERE " + " AND ".join(where) + " ORDER BY ts DESC LIMIT ?", (*params, limit))
+    return [_event(r["ts"], "router", "router:" + r["kind"],
+                   device_id=None, entity=r["ip"] or r["mac"],
+                   summary=r["title"] + (f" ({r['ip']})" if r["ip"] else ""),
+                   detail={"severity": r["severity"], "kind": r["kind"],
+                           "ip": r["ip"], "mac": r["mac"], "line": r["line"]},
+                   ref=f"router:{r['id']}") for r in rows]
+
+
 def _ports(db: Database, since: float, until: float, *, device_id: str | None,
            limit: int) -> list[dict]:
     where = ["(first_seen BETWEEN ? AND ? OR closed_at BETWEEN ? AND ?)"]
@@ -336,6 +363,17 @@ def query_events(db: Database, *, since: float | None = None, until: float | Non
         events += _host_facts(db, since, until, fact_key=None, limit=limit)
     if "host_event" in wanted and not device_id:
         events += _host_events(db, since, until, kinds=None, limit=limit)
+    if "router" in wanted:
+        # scoped to the device when one is given, else all router lines
+        ips, macs = set(), set()
+        if device_id:
+            dev = db.query_one("SELECT ip, mac FROM devices WHERE device_id = ?", (device_id,))
+            if dev:
+                if dev["ip"]:
+                    ips.add(dev["ip"])
+                if dev["mac"]:
+                    macs.add(dev["mac"].lower())
+        events += _router(db, since, until, ips=ips, macs=macs, kinds=None, limit=limit)
     if "port" in wanted:
         events += _ports(db, since, until, device_id=device_id, limit=limit)
     if "banner" in wanted:
@@ -408,6 +446,8 @@ def investigate(db: Database, alert_id: int, *, before_s: int = 3600,
             events += _availability(db, since, until, device_id=device_id, limit=limit)
             events += _ports(db, since, until, device_id=device_id, limit=limit)
             events += _banners(db, since, until, device_id=device_id, limit=limit)
+        if ips or macs:
+            events += _router(db, since, until, ips=ips, macs=macs, kinds=None, limit=limit)
     else:
         # Host / identity / agent alerts: the agent's own runs are the context.
         events += [e for e in _scans(db, since, until, targets=set(), limit=limit)

@@ -150,8 +150,16 @@ class MailLogCollector:
                 events = parse_log_body(body)
                 parsed_total += len(events)
                 if not dry_run:
+                    import time as _t
                     for ev in events:
-                        if self._raise(ev):
+                        # Every recognised line becomes a queryable router
+                        # event (the Logs tab and each device's timeline);
+                        # only the alert-worthy ones also raise an alert.
+                        self.db.record_router_event(
+                            ts=_t.time(), kind=ev.kind, severity=ev.severity,
+                            title=ev.title, ip=ev.ip, mac=ev.mac, line=ev.line,
+                            dedup_key=f"router:{ev.kind}:{ev.ip or ev.mac or ''}:{hash(ev.line) & 0xffffffff}")
+                        if ev.severity in ("medium", "high", "critical") and self._raise(ev):
                             raised += 1
         finally:
             try:

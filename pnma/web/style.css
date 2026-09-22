@@ -1828,6 +1828,7 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .evlog__chip--alert, .evlog__chip--alert_change { --evk: var(--nav-alerts); }
 .evlog__chip--availability { --evk: var(--nav-overview); }
 .evlog__chip--host_fact, .evlog__chip--host_event { --evk: var(--nav-host); }
+.evlog__chip--router { --evk: var(--nav-network); }
 .evlog__chip--port, .evlog__chip--banner { --evk: var(--nav-identity); }
 
 .evlog__rows { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
@@ -1838,6 +1839,7 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .evlog__row--alert, .evlog__row--alert_change { --evk: var(--nav-alerts); }
 .evlog__row--availability { --evk: var(--nav-overview); }
 .evlog__row--host_fact, .evlog__row--host_event { --evk: var(--nav-host); }
+.evlog__row--router { --evk: var(--nav-network); }
 .evlog__row--port, .evlog__row--banner { --evk: var(--nav-identity); }
 .evlog__row--sev-critical { --evk: var(--sev-critical); }
 .evlog__row--sev-high { --evk: var(--sev-high); }

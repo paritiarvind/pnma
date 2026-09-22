@@ -62,12 +62,17 @@ def test_ingest_raises_alerts(tmp_path, monkeypatch):
     db = Database(tmp_path / "pnma.db")
     mc = MailLogCollector(db, "mail-1", host="imap.example", user="u", password="p")
     r = mc.run_once()
-    assert r["ok"] and r["parsed"] == 2 and r["raised"] == 2
-    alerts = db.query("SELECT * FROM alerts WHERE rule_id = 'router_maillog'")
-    kinds = {a["title"].split(":")[1].strip() for a in alerts}
-    assert any("DHCP" in k or "lease" in k for k in kinds)
+    # Both lines are parsed and stored as queryable router events...
+    assert r["ok"] and r["parsed"] == 2
+    assert db.query_one("SELECT COUNT(*) n FROM router_events")["n"] == 2
+    # ...but only the higher-severity one raises an alert; a low DHCP lease is
+    # log context, not an alert, so the queue is not spammed with leases.
+    assert r["raised"] == 1
     fw = db.query_one("SELECT severity FROM alerts WHERE title LIKE '%attack%'")
     assert fw and fw["severity"] == "high"
+    assert db.query_one("SELECT COUNT(*) n FROM alerts WHERE rule_id='router_maillog'")["n"] == 1
+    # the DHCP lease is present as a router event even though it did not alert
+    assert db.query_one("SELECT kind FROM router_events WHERE kind='dhcp_lease'")
     db.close()
 
 

@@ -999,7 +999,7 @@ function evidenceGrid(ev) {
  * rest are wayfinding so a reader can skim "what kind of row is this". */
 const EVENT_KIND_LABEL = {
   observation: 'seen', scan: 'agent', delivery: 'delivered', alert: 'alert',
-  alert_change: 'changed', availability: 'ping', host_fact: 'control', host_event: 'host', port: 'port', banner: 'banner',
+  alert_change: 'changed', availability: 'ping', host_fact: 'control', host_event: 'host', router: 'router', port: 'port', banner: 'banner',
 };
 
 function clockTime(ts) {
@@ -1637,6 +1637,11 @@ function buildNotifyPill() {
 
 function renderAlerts(payload, container, onAction) {
   const alerts = normaliseAlerts((payload && payload.alerts) || []);
+  // Preserve what the reader had going when a real change forces a rebuild:
+  // which device stories were expanded, and the scroll position. Without this
+  // a rebuild snaps every open story shut and jumps to the top.
+  const openStories = new Set(Array.from(container.querySelectorAll('.story[open]')).map((d) => d.dataset.subject));
+  const scrollY = window.scrollY;
   clear(container);
   notifyNew(alerts);
 
@@ -1697,6 +1702,11 @@ function renderAlerts(payload, container, onAction) {
     el('p', { class: 'placeholder alertqueue__none', text: 'Nothing matches this filter.', hidden: true }),
   ])));
   applyAlertFilter(container);
+  // Re-open the stories the reader had open, and keep their scroll position.
+  if (openStories.size) {
+    container.querySelectorAll('.story').forEach((d) => { if (openStories.has(d.dataset.subject)) d.open = true; });
+    if (scrollY) window.scrollTo(0, scrollY);
+  }
 
   // An action taken inside the drawer forces this re-render; keep the drawer
   // on the same alert, now in its new state, instead of snapping it shut.
@@ -2125,12 +2135,18 @@ async function loadPanel(opts, force) {
     const resp = await fetch(opts.path);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const body = await resp.text();
-    if (!force && body === opts.getLast() && container.firstChild) return;
+    // Compare a structural signature when the panel provides one, so churn in
+    // volatile fields (an alert's last_seen or count bumping) does not trigger
+    // a full rebuild -- that was the Alerts page "visibly reloading". The
+    // relative-time labels going a little stale between real changes is a fair
+    // trade for a queue that does not flash every few seconds.
+    const cur = opts.signature ? opts.signature(body) : body;
+    if (!force && cur === opts.getLast() && container.firstChild) return;
     // The privacy mask can only hide a hostname it has been told about, and
     // alert prose quotes hostnames. Wait for viz.js's name preload so the
     // first paint is already masked (see PNMA.namesReady).
     if (window.PNMA && window.PNMA.namesReady) await window.PNMA.namesReady;
-    opts.setLast(body);
+    opts.setLast(cur);
     opts.render(JSON.parse(body), container);
   } catch (err) {
     opts.setLast(null);
@@ -2186,6 +2202,13 @@ async function loadAlerts(force) {
     label: 'Alerts',
     getLast: () => lastAlertsPayload,
     setLast: (v) => { lastAlertsPayload = v; },
+    signature: (body) => {
+      try {
+        const a = JSON.parse(body).alerts || [];
+        // Only the fields that shape the DOM: which alerts, their severity,
+        // status, title and grouping -- not last_seen, count or evidence.
+        return a.map((x) => x.id + '|' + x.severity + '|' + x.status + '|' + x.rule_id + '|' + (x.device_id || '') + '|' + (x.title || '')).join(String.fromCharCode(10)); } catch (e) { return body; }
+    },
     render: (payload, container) => renderAlerts(payload, container, alertAction),
   }, force);
 }

@@ -251,6 +251,24 @@ CREATE INDEX IF NOT EXISTS idx_observations_ts ON observations(ts);
 -- What happened on the monitoring host (pnma.collectors.host_events): a
 -- script block, a service install, a new autorun, a hidden directory, a
 -- notable outbound connection. agent_generated marks PNMA's own scripts.
+-- Lines the router emailed (pnma.collectors.maillog): the WAN side, DHCP
+-- leases, admin logins and firewall events a single host cannot see. Keyed by
+-- the IP/MAC in the line so a device's investigation can pull the router's
+-- view of it. dedup_key collapses the same line re-sent in overlapping mails.
+CREATE TABLE IF NOT EXISTS router_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         REAL NOT NULL,
+    kind       TEXT NOT NULL,          -- dhcp_lease|admin_login|firewall_event|config_change|wan_event
+    severity   TEXT,
+    title      TEXT NOT NULL,
+    ip         TEXT,
+    mac        TEXT,
+    line       TEXT NOT NULL,
+    dedup_key  TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_router_events_ts ON router_events(ts);
+CREATE INDEX IF NOT EXISTS idx_router_events_ip ON router_events(ip, ts);
+
 CREATE TABLE IF NOT EXISTS host_events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     ts              REAL NOT NULL,
@@ -589,6 +607,17 @@ class Database:
             "VALUES(?,?,?,?,?,?)",
             (alert_id, ts or time.time(), field, old_value, new_value, actor),
         )
+
+    def record_router_event(self, *, ts: float, kind: str, severity: str | None,
+                            title: str, ip: str | None, mac: str | None, line: str,
+                            dedup_key: str) -> bool:
+        """Persist one parsed router log line; False if this line was seen before."""
+        cur = self.execute(
+            "INSERT OR IGNORE INTO router_events(ts, kind, severity, title, ip, mac, line, dedup_key) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (ts, kind, severity, title, ip, mac, line, dedup_key),
+        )
+        return cur.rowcount > 0
 
     def record_host_event(
         self,
