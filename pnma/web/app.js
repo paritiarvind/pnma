@@ -356,8 +356,7 @@ function factCard(fact) {
 
   const head = el('div', { class: 'fact__head' }, [
     stateChip(state),
-    el('span', { class: 'fact__title', text: fact.title || fact.fact_key }),
-    el('code', { class: 'fact__key', text: fact.fact_key }),
+    el('span', { class: 'fact__title', text: fact.title || fact.fact_key, title: fact.fact_key }),
   ]);
 
   // Needs-admin badge. Present on facts that require elevation regardless of
@@ -466,16 +465,35 @@ function categoryGroup(category, facts) {
     return String(a.fact_key).localeCompare(String(b.fact_key));
   });
 
-  const head = el('div', { class: 'cat-group__head' }, [
+  // A group is one line until it needs to be more. Findings and unknowns
+  // are shown as cards; the checks that passed fold into a single sentence
+  // -- "8 passing: Real-time protection, Tamper protection, ..." -- because a
+  // wall of green cards is the opposite of a wall the reader can scan.
+  const attention = sorted.filter((f) => f.state !== 'ok');
+  const passing = sorted.filter((f) => f.state === 'ok');
+  const verdict = counts.finding ? counts.finding + ' ' + plural(counts.finding, 'finding')
+    : counts.unknown ? counts.unknown + ' unmeasured' : 'all ' + counts.ok + ' passing';
+  const head = el('summary', { class: 'cat-group__head' }, [
+    el('span', { class: 'cat-group__chev', text: '\u203a' }),
     el('span', { class: 'cat-group__name', text: CATEGORY_LABELS[category] || category }),
+    el('span', { class: 'cat-group__verdict cat-group__verdict--' + (counts.finding ? 'finding' : counts.unknown ? 'unknown' : 'ok'), text: verdict }),
     el('span', { class: 'cat-group__counts' }, [
       tally('finding', counts.finding),
       tally('unknown', counts.unknown),
       tally('ok', counts.ok),
     ]),
   ]);
-
-  return el('section', { class: 'cat-group' }, [head].concat(sorted.map(factCard)));
+  const body = attention.map(factCard);
+  if (passing.length) {
+    body.push(el('details', { class: 'fact fact--ok fact--passing' }, [
+      el('summary', { class: 'fact__passing' }, [
+        stateChip('ok'),
+        el('span', { text: passing.length + ' passing: ' + passing.map((f) => f.title || f.fact_key).join(', ') }),
+      ]),
+      el('div', { class: 'fact__passinglist' }, passing.map(factCard)),
+    ]));
+  }
+  return el('details', { class: 'cat-group', open: attention.length ? 'open' : null, 'data-category': category }, [head].concat(body));
 }
 
 /* ---------------------------------------------------------------- summary */

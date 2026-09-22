@@ -607,10 +607,26 @@ input:focus-visible,
   align-items: center;
   gap: var(--s3);
   flex-wrap: wrap;
-  padding: var(--s2) var(--s3);
+  padding: 10px var(--s3);
   background: var(--bg-inset);
-  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  list-style: none;
 }
+.cat-group__head::-webkit-details-marker { display: none; }
+.cat-group[open] > .cat-group__head { border-bottom: 1px solid var(--line); }
+.cat-group__head:hover { background: color-mix(in srgb, var(--bg-inset) 80%, var(--fg) 4%); }
+.cat-group__head:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.cat-group__chev { color: var(--fg-dim); transition: transform 160ms ease; }
+.cat-group[open] > .cat-group__head .cat-group__chev { transform: rotate(90deg); }
+.cat-group__verdict { font-size: 12.5px; color: var(--fg-muted); }
+.cat-group__verdict--finding { color: var(--finding); }
+.cat-group__verdict--unknown { color: var(--unknown); }
+.fact--passing { padding: 0; }
+.fact__passing { cursor: pointer; list-style: none; display: flex; gap: var(--s2); align-items: baseline; padding: 10px var(--s3); font-size: 12.5px; color: var(--fg-muted); }
+.fact__passing::-webkit-details-marker { display: none; }
+.fact__passing:hover { color: var(--fg); }
+.fact__passinglist .fact { border-top: 1px solid var(--line); }
+@media (prefers-reduced-motion: reduce) { .cat-group__chev { transition: none; } }
 
 .cat-group__name {
   font-size: 13px;
@@ -674,7 +690,7 @@ input:focus-visible,
 /* ---- individual facts ---- */
 
 .fact {
-  padding: var(--s3);
+  padding: var(--s2) var(--s3);
   border-top: 1px solid var(--line);
   border-left: 3px solid transparent;
   transition: background-color 120ms ease;
