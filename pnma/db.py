@@ -34,6 +34,9 @@ def _severity_rank(severity: str) -> int:
     return SEVERITY_ORDER.index(severity) if severity in SEVERITY_ORDER else 0
 
 
+# An unchanged finding re-raised inside this window does not bump the alert.
+ALERT_BUMP_MIN_S = 60.0
+
 SCHEMA_VERSION = 1
 
 SCHEMA = """
@@ -517,7 +520,8 @@ class Database:
         """
         now = ts or time.time()
         existing = self.query_one(
-            "SELECT id, severity, title, status FROM alerts WHERE dedup_key = ?",
+            "SELECT id, severity, title, description, evidence, status, last_seen "
+            "FROM alerts WHERE dedup_key = ?",
             (dedup_key,),
         )
         evidence_json = json.dumps(evidence) if evidence else None
@@ -531,6 +535,21 @@ class Database:
                  mitre_id, mitre_name, evidence_json, now, now),
             )
             return True
+
+        # A finding the rules re-emit unchanged is not news. Detection now runs
+        # within seconds of every collector write, so bumping count/last_seen
+        # on each pass would inflate "seen on N runs" into the thousands and
+        # write the alerts table every few seconds (which the dashboard's
+        # change stream would faithfully repaint). Unchanged within the
+        # window: leave the row alone.
+        if (
+            existing["severity"] == severity and existing["title"] == title
+            and existing["description"] == description
+            and existing["evidence"] == evidence_json
+            and existing["status"] != "resolved"
+            and now - existing["last_seen"] < ALERT_BUMP_MIN_S
+        ):
+            return False
 
         escalated = _severity_rank(severity) > _severity_rank(existing["severity"])
         new_status = existing["status"]

@@ -50,13 +50,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..db import Database
-from .host_windows import _ps, is_windows
+from .host_windows import AGENT_MARKER, _ps, is_windows
 
 log = logging.getLogger(__name__)
-
-# Stamped onto every script PNMA itself runs, so its own 4104 blocks can be
-# told apart from anyone else's. Applied by `_ps_marked` below.
-AGENT_MARKER = "# pnma-agent"
 
 EVENT_KINDS = (
     "software_installed", "software_removed", "autorun_added", "autorun_removed",
@@ -156,6 +152,14 @@ def software_severity(tags: list[str]) -> str | None:
 PNMA_OWN = re.compile(r"start-pnma\.ps1|pnma", re.I)
 
 
+# `cmd.exe /q /c del /q "C:\\Program Files\\..."`: the RunOnce an installer
+# leaves to remove its own cached setup binary (OneDrive does this on every
+# update). cmd.exe deleting one file under Program Files is not a script host.
+_CLEANUP_RUNONCE = re.compile(
+    r'^"?[A-Za-z]:\\windows\\system32\\cmd\.exe"?\s+/q\s+/c\s+del\s+/q\s+"?[A-Za-z]:\\program files',
+    re.I)
+
+
 def classify_autorun(entry: dict) -> list[str]:
     command = entry.get("command") or ""
     tags: list[str] = []
@@ -163,6 +167,8 @@ def classify_autorun(entry: dict) -> list[str]:
         # PNMA's own Startup shortcut launches powershell; attributing it is
         # the same honesty as the passive collector ignoring its own probes.
         return ["pnma_own"]
+    if _CLEANUP_RUNONCE.search(command) and "runonce" in (entry.get("where") or "").lower():
+        return ["installer_cleanup"]
     if SCRIPT_HOST.search(command):
         tags.append("script_host")
     if USER_WRITABLE.search(command):
@@ -213,7 +219,13 @@ _COMPILED_SCRIPT_PATTERNS = [(t, s, re.compile(r, re.I | re.S), m) for t, s, r, 
 
 # Windows' own module boilerplate accounts for most Warning-level 4104 rows
 # on a machine with the policy off. It is not a script anyone wrote.
-_BOILERPLATE = re.compile(r"\$__cmdletization_|Microsoft\.PowerShell\.Core\\Set-StrictMode -Off|ObjectModelWrapper", re.I)
+_BOILERPLATE = re.compile(
+    r"\$__cmdletization_|Microsoft\.PowerShell\.Core\\Set-StrictMode -Off|ObjectModelWrapper|"
+    # Cmdlet proxy definitions (the Defender module's Set-MpPreference has a
+    # parameter literally named DisableRealtimeMonitoring): parameter blocks
+    # with aliases and validators are a module loading, not a script running.
+    r"\[Parameter\(ParameterSetName=.{0,200}\[Alias\(|\[ValidateNotNullOrEmpty\(\)\]\s*\[(switch|bool|string)\]\s*\$\{",
+    re.I | re.S)
 
 
 def classify_script_block(text: str) -> list[tuple[str, str, str]]:
@@ -315,7 +327,8 @@ def _sha256_of(command_or_path: str | None) -> str | None:
 
 
 def _ps_marked(script: str, timeout: int = 60):
-    return _ps(AGENT_MARKER + "\n" + script, timeout=timeout)
+    # _ps already stamps the marker; kept as the seam the tests mock.
+    return _ps(script, timeout=timeout)
 
 
 @dataclass

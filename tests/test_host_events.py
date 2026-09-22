@@ -54,6 +54,9 @@ def test_classify_software(entry, expect_tags, expect_sev):
     ({"name": "Updater", "command": "powershell.exe -w hidden -enc SQBFAFgA"}, {"script_host", "obfuscated_or_downloader"}, "high"),
     ({"name": "x", "command": 'wscript.exe "C:\\Users\\x\\AppData\\Roaming\\a.vbs"'}, {"script_host", "user_writable_path"}, "high"),
     ({"name": "x", "command": '"C:\\Users\\x\\AppData\\Local\\Temp\\svc.exe"', "signed": False}, {"user_writable_path", "unsigned"}, "low"),
+    ({"name": "Delete Cached Update Binary", "where": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+      "command": 'C:\\WINDOWS\\system32\\cmd.exe /q /c del /q "C:\\Program Files\\Microsoft OneDrive\\Update\\OneDriveSetup.exe"'},
+     {"installer_cleanup"}, None),
 ])
 def test_classify_autorun(entry, expect_tags, expect_sev):
     tags = he.classify_autorun(entry)
@@ -63,6 +66,13 @@ def test_classify_autorun(entry, expect_tags, expect_sev):
 
 def test_classify_script_block_ignores_windows_boilerplate_and_scores_combos():
     assert he.classify_script_block("$__cmdletization_objectModelWrapper = 1; IEX x") == []
+    # the Defender module's own Set-MpPreference definition mentions
+    # DisableRealtimeMonitoring as a parameter name: a module loading, not tampering
+    assert he.classify_script_block(
+        "[Parameter(ParameterSetName='Set0')] [Alias('drtm')] [ValidateNotNull()] [ValidateNotNullOrEmpty()] "
+        "[bool] ${DisableRealtimeMonitoring}, [Parameter(ParameterSetName='Set0')] [Alias('rstt')]") == []
+    # ...but the same words in a one-liner still match
+    assert [t for t, _, _ in he.classify_script_block("Set-MpPreference -DisableRealtimeMonitoring $true")] == ["defender_tamper"]
     single = he.classify_script_block("Invoke-Expression (Get-Content x)")
     assert [t for t, _, _ in single] == ["invoke_expression"]
     assert he.script_block_severity(single) == "medium"
@@ -96,6 +106,22 @@ def test_classify_connection(conn, expect_tags, expect_sev):
 
 # ------------------------------------------------------------------ collector
 
+def test_every_pnma_script_carries_the_agent_marker(monkeypatch):
+    """The marker is what lets 4104 rows from PNMA's own posture and event
+    scripts be attributed instead of alerted on (the Defender module import
+    was the first false positive). It is added in _ps, so every caller gets it."""
+    from pnma.collectors import host_windows as hw
+    seen = {}
+    class R:  # what subprocess.run returns
+        returncode = 0; stdout = "{}"; stderr = ""
+    def fake_run(cmd, **kw):
+        seen["script"] = cmd[-1]; return R()
+    monkeypatch.setattr(hw.subprocess, "run", fake_run)
+    hw._ps("Get-MpPreference | ConvertTo-Json")
+    assert seen["script"].startswith(hw.AGENT_MARKER + chr(10))
+    assert seen["script"].endswith("Get-MpPreference | ConvertTo-Json")
+
+
 def _db():
     return Database(Path(tempfile.mkdtemp()) / "t.db")
 
@@ -113,7 +139,6 @@ class FakePS:
         self.counters = []
 
     def __call__(self, script, timeout=60):
-        assert script.startswith(he.AGENT_MARKER), "every PNMA script must carry the marker"
         if "Uninstall" in script:
             return True, self.software, ""
         if "CurrentVersion\\Run" in script or "GetFolderPath('Startup')" in script:

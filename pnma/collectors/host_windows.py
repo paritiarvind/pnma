@@ -94,6 +94,11 @@ def is_elevated() -> bool:
         return False
 
 
+# Stamped onto every script PNMA runs so its own 4104 script blocks can be
+# told apart from anyone else's (see host_events.collect_winevents).
+AGENT_MARKER = "# pnma-agent"
+
+
 def _ps(script: str, timeout: int = 45) -> tuple[bool, object, str]:
     """Run PowerShell, parse JSON output.
 
@@ -108,7 +113,7 @@ def _ps(script: str, timeout: int = 45) -> tuple[bool, object, str]:
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        script,
+        AGENT_MARKER + "\n" + script,
     ]
     try:
         proc = subprocess.run(

@@ -69,8 +69,15 @@ def test_resolved_alert_reopens_on_any_recurrence():
     assert db.query_one("SELECT status FROM alerts")["status"] == "open"
 
 
-def test_unchanged_refresh_writes_no_history():
+def test_unchanged_refresh_writes_no_history_and_does_not_bump_within_window():
     db = _db()
-    _raise(db); _raise(db); _raise(db)
+    t0 = 1_700_000_000.0
+    _raise(db, ts=t0); _raise(db, ts=t0 + 2); _raise(db, ts=t0 + 30)
     assert db.query_one("SELECT COUNT(*) AS n FROM alert_changes")["n"] == 0
-    assert db.query_one("SELECT count FROM alerts")["count"] == 3
+    row = db.query_one("SELECT count, last_seen FROM alerts")
+    assert row["count"] == 1 and row["last_seen"] == t0        # re-raised within 60s: untouched
+    _raise(db, ts=t0 + 120)
+    row = db.query_one("SELECT count, last_seen FROM alerts")
+    assert row["count"] == 2 and row["last_seen"] == t0 + 120  # a later pass still counts
+    _raise(db, ts=t0 + 130, evidence={"n": 2})
+    assert db.query_one("SELECT count FROM alerts")["count"] == 3  # changed evidence always lands
