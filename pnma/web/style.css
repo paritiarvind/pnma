@@ -76,8 +76,8 @@
    * This value clears the CVD floor (ΔE 8.6) while staying inside the
    * dark-mode lightness band the validator also flagged the original for
    * sitting above (0.695 vs a 0.48-0.67 band). */
-  --ok:            #0f9d58;
-  --ok-bg:         rgba(15, 157, 88, 0.10);
+  --ok:            #3ecf7a;
+  --ok-bg:         rgba(62, 207, 122, 0.10);
   --ok-line:       rgba(15, 157, 88, 0.45);
 
   --finding:       #f85149;
@@ -88,8 +88,9 @@
    * applicable"; this state means "we were not allowed to look", which is an
    * active gap in coverage and needs a colour with the same weight as a
    * finding while being nothing like it. */
-  --unknown:       #a371f7;
-  --unknown-bg:    rgba(163, 113, 247, 0.10);
+  --unknown:       #9b8afb;
+  --pattern-cnr:   repeating-linear-gradient(135deg, var(--bg-inset) 0 6px, color-mix(in srgb, var(--unknown) 22%, transparent) 6px 12px);
+  --unknown-bg:    rgba(155, 138, 251, 0.10);
   --unknown-line:  rgba(163, 113, 247, 0.45);
 
   --warn:          #d29922;
@@ -721,18 +722,9 @@ input:focus-visible,
  * texture cue that survives greyscale printing and colour-blindness both: a
  * measured result has a solid edge, an unmeasured one is visibly striped. */
 .fact--unknown {
-  border-left-color: transparent;
-  background-image: repeating-linear-gradient(
-    45deg,
-    var(--unknown-line) 0,
-    var(--unknown-line) 3px,
-    transparent 3px,
-    transparent 7px
-  );
-  background-size: 3px 100%;
-  background-repeat: no-repeat;
-  background-position: left top;
-  padding-left: calc(var(--s3) + 3px);
+  border-left-color: var(--unknown);
+  background-image: var(--pattern-cnr);
+  background-size: 17px 17px;
 }
 
 .fact__head {
