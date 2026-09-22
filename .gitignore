@@ -73,3 +73,7 @@ data/quarantine/
 
 # Third-party Claude Code skills installed locally (npx skills add ...)
 .claude/skills/
+
+# Generated reports and evidence bundles (contain live data)
+reports/
+evidence/

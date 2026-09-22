@@ -509,6 +509,63 @@ def cmd_oui_update(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    """Write a monthly summary report (Markdown)."""
+    import datetime as _dt
+    from pathlib import Path
+
+    from .db import Database
+    from .daemon import VERSION
+    from . import report as R
+
+    cfg = Config.load(args.config)
+    db = Database(cfg.database)
+    if args.month:
+        year, month = (int(x) for x in args.month.split("-"))
+    else:
+        today = _dt.date.today().replace(day=1) - _dt.timedelta(days=1)
+        year, month = today.year, today.month
+    rep = R.monthly_report(db, year, month, version=VERSION)
+    md = R.render_markdown(rep)
+    if args.out:
+        out = Path(args.out)
+    else:
+        Path("reports").mkdir(exist_ok=True)
+        out = Path("reports") / f"{R.BRAND.lower()}-{year:04d}-{month:02d}.md"
+    out.write_text(md, encoding="utf-8")
+    print(f"  wrote {out}")
+    print(f"  {rep['alerts']['opened_total']} alerts opened, "
+          f"{rep['alerts']['resolved_total']} resolved, "
+          f"{rep['alerts']['still_open_total']} still open in {rep['period']['label']}")
+    return 0
+
+
+def cmd_evidence(args) -> int:
+    """Gather a forensic evidence bundle for one alert or device."""
+    from pathlib import Path
+
+    from .db import Database
+    from .daemon import VERSION
+    from . import report as R
+
+    cfg = Config.load(args.config)
+    db = Database(cfg.database)
+    out_dir = Path(args.out) if args.out else Path("evidence")
+    try:
+        result = R.evidence_bundle(
+            db, out_dir=out_dir, alert_id=args.alert, device_id=args.device,
+            version=VERSION, before_h=args.before, after_h=args.after)
+    except ValueError as exc:
+        print(f"  {exc}")
+        return 2
+    print(f"  bundle:  {result['dir']}")
+    print(f"  zip:     {result['zip']}")
+    print(f"  files:   {len(result['manifest']['artifacts']) + 3} "
+          f"(each with a SHA-256 in MANIFEST.json)")
+    print("  verify:  sha256sum -c SHA256SUMS   (inside the folder)")
+    return 0
+
+
 def cmd_detections(args) -> int:
     from .db import Database
     from .detections.base import DetectionEngine
@@ -833,6 +890,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--note", default="", help="why: the alert id or what pointed at it")
     p.add_argument("--database", default=None, help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_quarantine)
+
+    p = sub.add_parser("report", help="write a monthly summary report (Markdown)")
+    p.add_argument("--month", help="YYYY-MM (default: last complete month)")
+    p.add_argument("--out", help="output file (default reports/<brand>-YYYY-MM.md)")
+    p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("evidence", help="gather a forensic evidence bundle for an alert or device")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--alert", type=int, help="alert id")
+    g.add_argument("--device", help="device id")
+    p.add_argument("--out", help="output directory (default evidence/)")
+    p.add_argument("--before", type=float, default=6, help="hours of context before (default 6)")
+    p.add_argument("--after", type=float, default=6, help="hours of context after (default 6)")
+    p.set_defaults(func=cmd_evidence)
 
     p = sub.add_parser("detections", help="list rules and their blind spots")
     p.add_argument("--json", action="store_true")
