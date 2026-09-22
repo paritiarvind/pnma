@@ -158,6 +158,10 @@ def test_every_rule_in_the_default_set_produces_an_alert():
         # same port, and the correlation engine keeps one alert per port. The
         # rule is exercised -- see test_sec555 -- just never the survivor here.
         known.discard("cleartext_protocol")
+        # off_hours_activity needs 14+ days of per-device history to build an
+        # active-hour envelope; the 7-day demo cannot, so it is legitimately
+        # unexercised here. Verified directly in test_activity.
+        known.discard("off_hours_activity")
     finally:
         db.close()
 

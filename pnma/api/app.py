@@ -335,6 +335,27 @@ def create_app(config: Config, token: str | None = None) -> FastAPI:
             current = _cursor()
         return {"cursor": current, "changed": current != cursor, "ts": time.time()}
 
+    # -- per-device network activity (pnma.activity) -------------------------
+
+    @app.get("/api/activity")
+    def api_activity():
+        """Per-device presence/rhythm comparison from passive observations.
+        Not bytes -- Hearth cannot meter per-device volume without the router;
+        this is how often and at which hours each device is seen."""
+        from .. import activity as act
+
+        return {"devices": act.compare_devices(db),
+                "note": "Presence and active-hours from passive ARP/DHCP. "
+                        "Per-device data volume needs the router's client stats."}
+
+    @app.get("/api/activity/{device_id}")
+    def api_activity_one(device_id: str):
+        from .. import activity as act
+
+        a = act.device_activity(db, device_id)
+        a["envelope"] = act.active_hour_envelope(db, device_id)
+        return a
+
     # -- host inventory (pnma.collectors.host_events) ------------------------
 
     @app.get("/api/host/software")

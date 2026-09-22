@@ -15,8 +15,10 @@ import json
 import re
 
 from .base import Detection, DetectionContext, Finding
+from .. import activity
 
 WINDOW_S = 30 * 24 * 3600
+DAY = 86400
 
 
 # --------------------------------------------------------------- cleartext
@@ -196,8 +198,97 @@ class RandomServiceNameDetection(Detection):
         return out
 
 
+
+
+class OffHoursActivityDetection(Detection):
+    """A device active at an hour it is never normally active.
+
+    SEC555's baselining idea: learn a thing's rhythm, then flag the departure.
+    A phone or laptop that only ever appears 07:00-23:00 suddenly chattering at
+    03:00 is worth one look -- it woke for an update, or something is using it
+    while you sleep."""
+
+    rule_id = "off_hours_activity"
+    name = "Device active outside its normal hours"
+    severity = "low"
+    mitre_id = "T1071"
+    mitre_name = "Application Layer Protocol"
+    requires = "passive observations: a device's learned active-hour envelope (needs 14+ days of history)"
+    blind_spots = (
+        "Needs a fortnight of history before it will judge a device at all, and "
+        "never fires on an always-on device (a TV, a hub, the gateway) -- those "
+        "have no 'off hours'. It sees that a device was present at an unusual "
+        "hour, not what it did; a scheduled update and an intruder look the same "
+        "here, so it is deliberately low severity and a prompt to look, not a "
+        "verdict."
+    )
+    RECENT_S = 3600
+
+    def evaluate(self, ctx: DetectionContext) -> list[Finding]:
+        if ctx.in_learning_mode:
+            return []
+        out: list[Finding] = []
+        recent = ctx.db.query(
+            "SELECT DISTINCT device_id FROM observations "
+            "WHERE agent_generated = 0 AND ts >= ? AND device_id IS NOT NULL",
+            (ctx.now - self.RECENT_S,))
+        for r in recent:
+            did = r["device_id"]
+            if did in ctx.self_device_ids:
+                continue
+            env = activity.active_hour_envelope(ctx.db, did, now=ctx.now)
+            if not activity.is_off_hours(env, ctx.now):
+                continue
+            dev = ctx.db.query_one("SELECT label, hostname, ip FROM devices WHERE device_id = ?", (did,))
+            name = (dev["label"] or dev["hostname"] or dev["ip"] or did) if dev else did
+            hour = int(activity._local_hour(ctx.now))
+            out.append(Finding(
+                dedup_key="off_hours:" + did + ":" + str(int(ctx.now // DAY)),
+                severity=self.severity,
+                title=name + " is active at " + ("%02d:00" % hour) + ", outside its usual hours",
+                description=(
+                    name + " was seen on the network around " + ("%02d:00" % hour) + ". Over the last "
+                    + str(int(env["history_days"])) + " days it has only ever been active during: "
+                    + _hours_phrase(env["active_hours"]) + "." + REST),
+                device_id=did,
+                evidence={"hour": hour, "active_hours": env["active_hours"],
+                          "history_days": round(env["history_days"], 1)},
+                triggers_triage_scan=True,
+            ))
+        return out
+
+
+REST = ("\n\nWHY THIS MATTERS: a device keeping to a daily rhythm that "
+                    "suddenly breaks it is a small but real signal -- something "
+                    "woke it, or something is using it, at a time you are usually "
+                    "not.\n\n"
+                    "BENIGN EXPLANATION: a scheduled OS or app update, a backup, "
+                    "a family member up late, or the device simply staying on "
+                    "longer than usual.\n\n"
+                    "MALICIOUS EXPLANATION: the device is compromised and active "
+                    "on someone else's schedule, or it is not the device you "
+                    "think it is.\n\n"
+                    "NEXT STEP: open its Investigation log for this window and see "
+                    "what it did -- a scan, a new port, an outbound connection. If "
+                    "nothing explains it and it is not yours, untrust it.")
+
+
+def _hours_phrase(hours):
+    if not hours:
+        return "no established hours"
+    runs, start, prev = [], hours[0], hours[0]
+    for h in hours[1:]:
+        if h == prev + 1:
+            prev = h
+        else:
+            runs.append((start, prev)); start = prev = h
+    runs.append((start, prev))
+    return ", ".join(("%02d:00-%02d:00" % (a, b)) if a != b else ("%02d:00" % a) for a, b in runs)
+
+
 def sec555_rules() -> list[Detection]:
     return [
         CleartextProtocolDetection(),
         RandomServiceNameDetection(),
+        OffHoursActivityDetection(),
     ]
