@@ -624,14 +624,20 @@
       + ' · ' + devices.length + ' ' + plural(devices.length, 'device') + ', ' + online + ' online';
 
     // The most severe open alerts, as chips into the drawer.
+    // One chip per rule, not per alert: three "PowerShell block matched"
+    // chips say less than one chip that says x3.
+    const seenRule = new Map();
     const top = openAlerts
       .filter((a) => a.severity === 'critical' || a.severity === 'high')
       .sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity))
+      .filter((a) => { const k = a.rule_id + ':' + a.severity; seenRule.set(k, (seenRule.get(k) || 0) + 1); return seenRule.get(k) === 1; })
       .slice(0, 4);
     const chips = top.map((a) => {
+      const n = seenRule.get(a.rule_id + ':' + a.severity) || 1;
       const c = el('button', { class: 'pb__chip pb__chip--' + a.severity, type: 'button',
-                               title: 'Open this alert' },
-        [el('span', { class: 'pb__chipsev', text: a.severity }), a.title || a.rule_id]);
+                               title: n > 1 ? 'Open the first of ' + n : 'Open this alert' },
+        [el('span', { class: 'pb__chipsev', text: a.severity }), a.title || a.rule_id,
+         n > 1 ? el('span', { class: 'pb__chipn', text: '\u00d7' + n }) : null]);
       c.addEventListener('click', () => { if (PNMA.openAlert) PNMA.openAlert(a.id); });
       return c;
     });
@@ -645,7 +651,7 @@
       el('div', { class: 'pb__meta' }, [
         el('span', { class: 'pb__updated', text: 'updated ' + relativeTime(summary.generated_at || Date.now() / 1000) }),
         (counts.critical || counts.high)
-          ? (() => { const b = el('button', { class: 'pb__all', type: 'button', text: 'All alerts →' });
+          ? (() => { const b = el('button', { class: 'pb__all', type: 'button', text: 'All alerts' });
                      b.addEventListener('click', () => showTab('alerts')); return b; })()
           : null,
       ]),

@@ -820,6 +820,84 @@ function deviceLabelFor(deviceId) {
  * One queue row. Everything a triage pass needs to rank the alert without
  * opening it: severity, what, where, how old, what state it is in.
  */
+/* Same status, same rule, two or more alerts: one story row with the alerts
+ * inside. A single alert stays a plain row -- a group of one is just noise.
+ * Order is preserved (open first, severity inside), so a story sits where
+ * its worst alert would have. */
+function storyRows(sorted, onOpen) {
+  // Group by status + rule across severities; a story sits where its worst
+  // alert would have (first occurrence in the sorted list), so a rule with
+  // one critical and two mediums is one story at the critical position.
+  const groups = new Map();
+  for (const a of sorted) {
+    const key = a.status + '|' + a.rule_id;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(a);
+  }
+  const out = [];
+  const done = new Set();
+  for (const a of sorted) {
+    const key = a.status + '|' + a.rule_id;
+    if (done.has(key)) continue;
+    done.add(key);
+    const run = groups.get(key);
+    if (run.length < 2) { out.push(alertRow(a, onOpen)); continue; }
+    const worst = run[0].severity;
+    const devices = new Set(run.map((x) => x.device_id ? (deviceLabelFor(x.device_id) || x.device_id) : null).filter(Boolean));
+    const sevs = {};
+    run.forEach((x) => { sevs[x.severity] = (sevs[x.severity] || 0) + 1; });
+    const mix = Object.keys(sevs).length > 1 ? Object.keys(sevs).map((k) => sevs[k] + ' ' + k).join(', ') : null;
+    out.push(el('details', {
+      class: 'story story--' + worst, 'data-rule': a.rule_id,
+      open: (worst === 'critical' || worst === 'high') && a.status === 'open' ? 'open' : null,
+    }, [
+      el('summary', {}, [
+        el('span', { class: 'story__count', text: String(run.length) }),
+        el('span', {}, [
+          el('span', { class: 'story__name', text: RULE_STORY[a.rule_id] || (a.rule_id || '').replace(/_/g, ' ') }),
+          el('span', { class: 'story__meta' }, [
+            severityChip(worst),
+            mix ? el('span', { text: mix }) : null,
+            devices.size ? el('span', { text: devices.size === 1 ? Array.from(devices)[0] : devices.size + ' devices' }) : null,
+            a.status !== 'open' ? el('span', { class: 'badge', text: a.status }) : null,
+          ]),
+        ]),
+        el('span', { class: 'story__chev', text: '›' }),
+      ]),
+      el('div', { class: 'story__rows' }, run.map((x) => alertRow(x, onOpen))),
+    ]));
+  }
+  return out;
+}
+
+/* Rule ids as the reader should see them. Falls back to the id with the
+ * underscores removed, so an unlisted rule still reads. */
+const RULE_STORY = {
+  cve_exposure: 'Exposed to a known exploited weakness',
+  suspicious_powershell: 'Suspicious PowerShell on this host',
+  service_installed: 'New service, task or account on this host',
+  autorun_changed: 'Startup entry added or changed',
+  software_flagged: 'Notable software installed',
+  hidden_dir_created: 'Hidden directory created',
+  notable_connection: 'Outbound connection worth a look',
+  host_posture: 'Host security control misconfigured',
+  control_disabled: 'A host control changed state',
+  unmeasured_control: 'Controls PNMA could not measure',
+  identity_unreviewed: 'Accounts with unreviewed controls',
+  identity_posture: 'Account control in the wrong state',
+  availability: 'Devices that stopped answering',
+  new_device: 'New devices',
+  service_drift: 'A device started listening on a new port',
+  profile_deviation: 'A device behaving unlike its kind',
+  c2_indicator: 'Possible command-and-control',
+  arp_spoof: 'Gateway claimed by two addresses',
+  arp_sweep_seen: 'Network scan seen',
+  honeypot_hit: 'Honeypot attacked',
+  upload_spike: 'Unusual upload volume',
+  log_cleared: 'Event log cleared',
+  collector_heartbeat: 'The collector stopped reporting',
+};
+
 function alertRow(alert, onOpen) {
   const sev = SEVERITIES[alert.severity] ? alert.severity : 'low';
   const folded = foldedRules(alert);
@@ -1416,6 +1494,10 @@ function applyAlertFilter(container) {
     row.hidden = hide;
     if (!hide) shown += 1;
   });
+  container.querySelectorAll('.story').forEach((story) => {
+    const rows = Array.from(story.querySelectorAll('.alertrow'));
+    story.hidden = rows.length > 0 && rows.every((r) => r.hidden);
+  });
   container.querySelectorAll('.triage__chip').forEach((c) => {
     c.classList.toggle('is-on', (c.dataset.severity && c.dataset.severity === alertFilter.severity) ||
                                  (c.dataset.status && c.dataset.status === alertFilter.status));
@@ -1551,7 +1633,7 @@ function renderAlerts(payload, container, onAction) {
   });
 
   const openOne = (a) => openAlertSheet(a, onAction);
-  container.appendChild(el('div', { class: 'alertqueue' }, sorted.map((a) => alertRow(a, openOne)).concat([
+  container.appendChild(el('div', { class: 'alertqueue' }, storyRows(sorted, openOne).concat([
     el('p', { class: 'placeholder alertqueue__none', text: 'Nothing matches this filter.', hidden: true }),
   ])));
   applyAlertFilter(container);
