@@ -1972,3 +1972,4 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .recent .evlog__row { border-top: 1px solid var(--line); border-left-width: 2px; }
 .recent .evlog__head { grid-template-columns: max-content 1fr; padding: 6px 8px; }
 .recent .evlog__kind, .recent .evlog__src { display: none; }
+@media (max-width: 640px) { .rings { grid-template-columns: 1fr; } .ringcard { padding: var(--s2) var(--s3); } .ring { width: 92px; height: 92px; } }
