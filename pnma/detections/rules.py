@@ -44,6 +44,7 @@ class NewDeviceDetection(Detection):
             return []
 
         findings: list[Finding] = []
+        self_ids = ctx.self_device_ids
         rows = ctx.db.query(
             """SELECT d.* FROM devices d
                WHERE d.trusted = 0
@@ -53,6 +54,8 @@ class NewDeviceDetection(Detection):
         )
 
         for row in rows:
+            if row['device_id'] in ctx.self_device_ids:
+                continue
             mac = row["mac"] or ""
             randomised = row["mac_type"] == "local"
             has_fingerprint = bool(row["dhcp_fingerprint"])
@@ -286,6 +289,8 @@ class ServiceDriftDetection(Detection):
         )
 
         for row in rows:
+            if row['device_id'] in ctx.self_device_ids:
+                continue
             risk, explanation = classify_port(row["port"])
             if risk is None:
                 continue
@@ -355,6 +360,8 @@ class C2IndicatorDetection(Detection):
         )
 
         for row in rows:
+            if row['device_id'] in ctx.self_device_ids:
+                continue
             _, explanation = classify_port(row["port"])
             name = row["label"] or row["hostname"] or row["ip"] or row["device_id"]
             findings.append(
@@ -422,6 +429,8 @@ class AvailabilityDetection(Detection):
             (ctx.now - self.OFFLINE_AFTER_S, ctx.now - 86400 * 7),
         )
         for row in rows:
+            if row['device_id'] in ctx.self_device_ids:
+                continue
             name = row["label"] or row["hostname"] or row["ip"] or row["device_id"]
             mins = int((ctx.now - row["last_seen"]) / 60)
             findings.append(
@@ -505,6 +514,8 @@ class ProfileDeviationDetection(Detection):
         )
 
         for row in rows:
+            if row['device_id'] in ctx.self_device_ids:
+                continue
             try:
                 cls = DeviceClass(row["device_class"])
             except ValueError:
@@ -623,6 +634,8 @@ class CVEExposureDetection(Detection):
         findings: list[Finding] = []
         for hit in vulns.match_devices(devices):
             d = hit["device"]
+            if d["device_id"] in ctx.self_device_ids:
+                continue
             name = d.get("label") or d.get("hostname") or d.get("ip") or d["device_id"]
             # Banners the active confirmation probe has read for this device, if
             # it is enabled; empty otherwise. Lets an advisory say "confirmed

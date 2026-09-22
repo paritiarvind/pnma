@@ -86,10 +86,42 @@ class DetectionContext:
     # window: on a fresh install every device is "new", and a wall of alerts on
     # day one trains the operator to dismiss them.
     learning_until: float = 0.0
+    # Lazily-computed cache for self_device_ids; not a constructor argument.
+    _self_ids: "set[str] | None" = field(default=None, repr=False, compare=False)
 
     @property
     def in_learning_mode(self) -> bool:
         return self.now < self.learning_until
+
+    @property
+    def self_device_ids(self) -> set[str]:
+        """Device ids that ARE the monitoring host (its own network adapters).
+
+        A scanner cannot honestly assess its own host: a port on 192.168.x.y
+        answered from that same machine loops back through the local stack and
+        never crosses the firewall the way a LAN peer's probe would, so
+        "445 open" against ourselves means the service runs, not that it is
+        reachable. The host has its own dedicated posture path (host_facts);
+        the network device rules exclude it here so it is not graded twice,
+        once honestly and once through a mirror. Populated from meta.own_macs,
+        which the daemon writes at start (see pnma.netutil.local_macs)."""
+        if getattr(self, "_self_ids", None) is None:
+            import json as _json
+
+            own: set[str] = set()
+            row = self.db.query_one("SELECT value FROM meta WHERE key = 'own_macs'")
+            if row and row["value"]:
+                try:
+                    own = {m.lower() for m in _json.loads(row["value"])}
+                except ValueError:
+                    own = set()
+            ids: set[str] = set()
+            if own:
+                for d in self.db.query("SELECT device_id, mac FROM devices WHERE mac IS NOT NULL"):
+                    if (d["mac"] or "").lower() in own:
+                        ids.add(d["device_id"])
+            self._self_ids = ids
+        return self._self_ids
 
 
 class Detection(ABC):

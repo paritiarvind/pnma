@@ -340,3 +340,35 @@ def test_live_readers_run_clean_on_this_host():
     assert db.query_one("SELECT COUNT(*) n FROM host_software")["n"] > 0
     assert db.query_one("SELECT COUNT(*) n FROM host_counters")["n"] > 0
     assert db.query_one("SELECT state FROM host_facts WHERE fact_key = 'events.powershell_log'")["state"] == "ok"
+
+
+# ------------------------------------------------ self-host exclusion in rules
+
+def test_network_rules_skip_the_monitoring_host():
+    """A scanner must not grade its own host as if it were a LAN peer: 445
+    answered from the same machine loops back and never crosses the firewall.
+    The host has its own posture path; the network device rules exclude it,
+    keyed on meta.own_macs -- the same source ArpSweepDetection already uses."""
+    import json
+    import time as _t
+    from pnma.detections.base import DetectionContext
+    from pnma.detections.rules import (
+        CVEExposureDetection, ServiceDriftDetection, ProfileDeviationDetection,
+        C2IndicatorDetection, NewDeviceDetection,
+    )
+    db = _db(); now = _t.time()
+    db.execute("INSERT INTO meta(key,value) VALUES('own_macs',?)", (json.dumps(["aa:bb:cc:00:00:01"]),))
+    for did, mac, ip, fs in (("self", "aa:bb:cc:00:00:01", "10.0.0.9", now - 60),
+                             ("peer", "de:ad:be:ef:00:02", "10.0.0.8", now - 60)):
+        db.execute("INSERT INTO devices(device_id,mac,mac_type,ip,device_class,class_confidence,first_seen,last_seen,trusted) "
+                   "VALUES(?,?,'global',?,'unknown','low',?,?,0)", (did, mac, ip, fs, now))
+        db.execute("INSERT INTO ports(device_id,port,proto,service,first_seen,last_seen,risk) "
+                   "VALUES(?,445,'tcp','microsoft-ds',?,?,'high')", (did, fs, now))
+    ctx = DetectionContext(db=db, now=now)
+    assert ctx.self_device_ids == {"self"}
+    for rule in (CVEExposureDetection(), ServiceDriftDetection(), ProfileDeviationDetection(),
+                 C2IndicatorDetection(), NewDeviceDetection()):
+        ids = {f.device_id for f in rule.evaluate(ctx)}
+        assert "self" not in ids, rule.rule_id
+    # the peer is still assessed -- exclusion is the host only, not a blanket mute
+    assert "peer" in {f.device_id for f in CVEExposureDetection().evaluate(ctx)}
