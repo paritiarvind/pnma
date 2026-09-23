@@ -294,3 +294,49 @@ def test_admin_group_rule_makes_a_finding():
                          dedup_key="admingrp:x", mitre_id="T1098", sensor_id="host")
     f = rules.LocalAdminGroupDiffDetection().evaluate(DetectionContext(db=db, now=time.time()))
     assert len(f) == 1 and "administrator" in f[0].title.lower()
+
+
+# ------------------------------------------------------- scheduled task / driver
+
+def test_scheduled_task_scores_lolbin_high(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "tasks": [
+        {"path": "REPLBASE", "author": "MS", "action": "C:/Program Files/App/app.exe"}]}, ""))
+    assert c.collect_scheduled_tasks() == (0, "")            # first run: baseline
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "tasks": [
+        {"path": "REPLBASE", "author": "MS", "action": "C:/Program Files/App/app.exe"},
+        {"path": "REPLEVIL", "author": None, "action": "powershell.exe -w hidden -enc AAAA"}]}, ""))
+    n, err = c.collect_scheduled_tasks()
+    assert n == 1
+    ev = _events(db, "scheduled_task_added")
+    assert len(ev) == 1 and ev[0]["severity"] == "high"
+    assert json.loads(ev[0]["detail"])["lolbin_or_userpath"] is True
+
+
+def test_kernel_driver_unusual_path_is_high(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "drivers": [
+        {"name": "vmbus", "path": "C:/Windows/System32/drivers/vmbus.sys", "state": "Running"}]}, ""))
+    assert c.collect_kernel_drivers() == (0, "")             # first run: baseline
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "drivers": [
+        {"name": "vmbus", "path": "C:/Windows/System32/drivers/vmbus.sys", "state": "Running"},
+        {"name": "usbxhci", "path": "C:/Windows/System32/drivers/usbxhci.sys", "state": "Running"},
+        {"name": "mimidrv", "path": "C:/Users/Public/mimidrv.sys", "state": "Running"}]}, ""))
+    n, err = c.collect_kernel_drivers()
+    assert n == 2
+    sev = {json.loads(r["detail"])["name"]: r["severity"] for r in _events(db, "kernel_driver_added")}
+    assert sev == {"usbxhci": "low", "mimidrv": "high"}      # System32 low, Public high
+
+
+def test_scheduled_task_and_driver_rules_make_findings():
+    db = _db(); now = time.time()
+    db.record_host_event(kind="scheduled_task_added", ts=now - 60, summary="scheduled task added: X",
+                         detail={"path": "WinUpdate", "action": "powershell -enc AAAA", "lolbin_or_userpath": True},
+                         severity="high", dedup_key="schtask:x", mitre_id="T1053.005", sensor_id="host")
+    db.record_host_event(kind="kernel_driver_added", ts=now - 60, summary="new kernel driver: mimidrv",
+                         detail={"name": "mimidrv", "path": "C:/Users/Public/mimidrv.sys", "unusual_path": True},
+                         severity="high", dedup_key="driver:mimidrv", mitre_id="T1543.003", sensor_id="host")
+    ctx = DetectionContext(db=db, now=now)
+    assert len(rules.ScheduledTaskAddedDetection().evaluate(ctx)) == 1
+    f = rules.KernelDriverAddedDetection().evaluate(ctx)
+    assert len(f) == 1 and "mimidrv" in f[0].title

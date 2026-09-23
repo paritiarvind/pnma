@@ -59,7 +59,7 @@ EVENT_KINDS = (
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
     "powershell_downgrade", "firewall_rule_added", "lateral_connection",
-    "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed",
+    "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed", "scheduled_task_added", "kernel_driver_added",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -388,6 +388,8 @@ class HostEventCollector:
             ("defender_events", self.collect_defender_events),
             ("dns_servers", self.collect_dns_servers),
             ("admin_group", self.collect_admin_group),
+            ("scheduled_tasks", self.collect_scheduled_tasks),
+            ("kernel_drivers", self.collect_kernel_drivers),
         ):
             try:
                 n, unknown = fn()
@@ -1378,4 +1380,102 @@ try {
             state="ok", value=f"{len(current)} " + ("member" if len(current) == 1 else "members"),
             expected="stable; a new administrator is rare and deliberate",
             reason=None, evidence={"members": current})
+        return n, ""
+
+
+    # -- scheduled tasks (SEC555 Book 3: Baseline / Persistence) --------------
+
+    _SCHTASK_PS = r"""
+param()
+try {
+  $out = @()
+  Get-ScheduledTask -ErrorAction Stop | ForEach-Object {
+    $act = (@($_.Actions | ForEach-Object { ([string]$_.Execute + ' ' + [string]$_.Arguments).Trim() })) -join ' ; '
+    $out += [pscustomobject]@{ path = [string]$_.TaskPath + [string]$_.TaskName; author = [string]$_.Author; action = $act }
+  }
+  [pscustomobject]@{ ok = $true; tasks = $out } | ConvertTo-Json -Compress -Depth 4
+} catch { [pscustomobject]@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    def collect_scheduled_tasks(self) -> tuple[int, str]:
+        """A new scheduled task is a favourite persistence spot. Snapshot every
+        task (incl. user-context ones the elevated 4698 path may miss); alert on
+        a new one, scored high when its action is a script host / LOLBin or a
+        binary in a user-writable path, low otherwise (installers add tasks)."""
+        ok, res, err = _ps_marked(self._SCHTASK_PS, timeout=90)
+        if not ok:
+            return 0, f"scheduled tasks: {err}"
+        if not res.get("ok"):
+            return 0, f"scheduled tasks: {res.get('error')}"
+        tasks = res.get("tasks") or []
+        if isinstance(tasks, dict):
+            tasks = [tasks]
+        now = time.time()
+        current = {t.get("path"): t for t in tasks if t.get("path")}
+        prev_raw = self._meta("host_schtask_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for path, t in current.items():
+                if path in prev:
+                    continue
+                action = t.get("action") or ""
+                risky = bool(SCRIPT_HOST.search(action)) or bool(USER_WRITABLE.search(action))
+                if self._emit(
+                        kind="scheduled_task_added", ts=now,
+                        summary=f"scheduled task added: {path} -> {action[:100]}",
+                        detail={"path": path, "author": t.get("author"), "action": action, "lolbin_or_userpath": risky},
+                        severity="high" if risky else "low",
+                        dedup_key=f"schtask:{path}", mitre_id="T1053.005"):
+                    n += 1
+        self._set_meta("host_schtask_baseline", json.dumps(sorted(current)))
+        return n, ""
+
+    # -- kernel drivers (SEC555 Book 3: Baseline / BYOVD) ---------------------
+
+    _DRIVER_PS = r"""
+param()
+try {
+  $out = @()
+  Get-CimInstance Win32_SystemDriver -ErrorAction Stop | ForEach-Object {
+    $out += [pscustomobject]@{ name = [string]$_.Name; path = [string]$_.PathName; state = [string]$_.State }
+  }
+  [pscustomobject]@{ ok = $true; drivers = $out } | ConvertTo-Json -Compress -Depth 4
+} catch { [pscustomobject]@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    _DRIVER_TRUSTED_PATH = re.compile(r"[\/](system32|syswow64|driverstore|windows)[\/]", re.I)
+
+    def collect_kernel_drivers(self) -> tuple[int, str]:
+        """A newly-loaded kernel driver can be a rootkit or a vulnerable driver
+        brought in to be abused (BYOVD). Snapshot the driver set; alert on a new
+        one, high when it loads from an unusual path (not System32/DriverStore),
+        low from the normal locations (Windows Update adds those)."""
+        ok, res, err = _ps_marked(self._DRIVER_PS, timeout=90)
+        if not ok:
+            return 0, f"kernel drivers: {err}"
+        if not res.get("ok"):
+            return 0, f"kernel drivers: {res.get('error')}"
+        drivers = res.get("drivers") or []
+        if isinstance(drivers, dict):
+            drivers = [drivers]
+        now = time.time()
+        current = {d.get("name"): d for d in drivers if d.get("name")}
+        prev_raw = self._meta("host_driver_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for name, d in current.items():
+                if name in prev:
+                    continue
+                path = d.get("path") or ""
+                odd = bool(path) and not self._DRIVER_TRUSTED_PATH.search(path)
+                if self._emit(
+                        kind="kernel_driver_added", ts=now,
+                        summary=f"new kernel driver: {name}" + (f" ({path[-60:]})" if path else ""),
+                        detail={"name": name, "path": path or None, "unusual_path": odd},
+                        severity="high" if odd else "low",
+                        dedup_key=f"driver:{name}", mitre_id="T1543.003"):
+                    n += 1
+        self._set_meta("host_driver_baseline", json.dumps(sorted(current)))
         return n, ""

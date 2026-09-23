@@ -778,6 +778,85 @@ class LocalAdminGroupDiffDetection(_HostEventRule):
         )
 
 
+class ScheduledTaskAddedDetection(_HostEventRule):
+    rule_id = "scheduled_task_created"
+    name = "New scheduled task"
+    severity = "low"
+    kind = "scheduled_task_added"
+    mitre_id = "T1053.005"
+    mitre_name = "Scheduled Task/Job: Scheduled Task"
+    requires = "Get-ScheduledTask, unelevated; diffed against the host's own baseline (complements the elevated 4698 event)"
+    blind_spots = (
+        "Snapshot-diff, so it sees a task on the next pass, and a task added and removed between "
+        "passes is missed. It reads every task including user-context ones the 4698 Security event "
+        "can miss, but scores by the action's shape, not by signature -- a signed installer's task "
+        "in a normal path is low, a script-host or user-writable-path action is high. Installers add "
+        "tasks routinely, so a low here is usually just that."
+    )
+
+    def describe(self, row, d):
+        risky = d.get("lolbin_or_userpath")
+        return (
+            f"New scheduled task: {d.get('path') or '?'}",
+            f"{row['summary']}\n\n"
+            f"  Task     {d.get('path') or '?'}\n"
+            f"  Runs     {d.get('action') or '-'}\n"
+            f"  Author   {d.get('author') or '-'}\n\n"
+            "WHY THIS MATTERS: a scheduled task runs on a trigger -- at logon, on a timer -- which "
+            "makes it a durable way for something to keep coming back after a reboot. Persistence "
+            "lives here.\n\n"
+            "BENIGN EXPLANATION: you installed software; most apps register update or maintenance "
+            "tasks, and Windows itself adds many.\n\n"
+            + ("MALICIOUS EXPLANATION: the task runs a script host (PowerShell, mshta, rundll32) or a "
+               "binary in AppData/Temp/Public -- the hallmark of a task added to persist, not to "
+               "maintain an app.\n\n" if risky else
+               "MALICIOUS EXPLANATION: the task and its action are not something you can trace to an "
+               "app you installed.\n\n") +
+            "NEXT STEP: `Get-ScheduledTask -TaskPath '<path>' | Select-Object -ExpandProperty Actions`. "
+            "If you cannot place it, disable it (`Disable-ScheduledTask`) and investigate the program "
+            "it runs."
+        )
+
+
+class KernelDriverAddedDetection(_HostEventRule):
+    rule_id = "new_kernel_driver"
+    name = "New kernel driver"
+    severity = "low"
+    kind = "kernel_driver_added"
+    mitre_id = "T1543.003"
+    mitre_name = "Create or Modify System Process: Windows Service"
+    requires = "Win32_SystemDriver, unelevated; diffed against the host's own baseline"
+    blind_spots = (
+        "Snapshot-diff of the loaded driver set. It flags a new driver and scores it by where it "
+        "loads from -- high from an unusual path (the bring-your-own-vulnerable-driver shape), low "
+        "from System32/DriverStore where Windows Update and normal peripherals put theirs. It does "
+        "not verify the signature, so a signed-but-malicious or a legitimately-unsigned vendor "
+        "driver both rest on the path heuristic and your own recognition."
+    )
+
+    def describe(self, row, d):
+        odd = d.get("unusual_path")
+        return (
+            f"New kernel driver: {d.get('name') or '?'}",
+            f"{row['summary']}\n\n"
+            f"  Driver  {d.get('name') or '?'}\n"
+            f"  Path    {d.get('path') or '-'}\n\n"
+            "WHY THIS MATTERS: a kernel driver runs with the highest privilege on the machine. "
+            "Attackers load one to hide (a rootkit) or bring a known-vulnerable driver along to "
+            "abuse it (BYOVD) and switch off security from below.\n\n"
+            "BENIGN EXPLANATION: Windows Update, a new peripheral, or software you installed (a VPN, "
+            "a game anti-cheat, a virtualization tool) added it -- these are common and load from "
+            "the normal system paths.\n\n"
+            + ("MALICIOUS EXPLANATION: this driver loads from a path outside System32/DriverStore, "
+               "which almost nothing legitimate does.\n\n" if odd else
+               "MALICIOUS EXPLANATION: you installed nothing that would add a driver, and the name is "
+               "not one you can tie to hardware or an app.\n\n") +
+            "NEXT STEP: look the driver name up, and check its signature with "
+            "`Get-AuthenticodeSignature '<path>'`. An unsigned or unknown driver from an odd path "
+            "should be treated as hostile -- isolate the host and investigate."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -798,4 +877,6 @@ def host_event_rules() -> list[Detection]:
         DefenderThreatDetection(),
         DnsServerChangedDetection(),
         LocalAdminGroupDiffDetection(),
+        ScheduledTaskAddedDetection(),
+        KernelDriverAddedDetection(),
     ]

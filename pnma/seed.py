@@ -341,6 +341,11 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
          "medium", "T1557"),
         ("admin_group_changed", t + 280, "new local administrator: DESKTOP\\svc_helper",
          {"member": "DESKTOP\\svc_helper", "members": ["DESKTOP\\arvind", "DESKTOP\\svc_helper"]}, "high", "T1098"),
+        ("scheduled_task_added", t + 290, "scheduled task added: \\OneDriveStandaloneUpdater -> powershell.exe -w hidden -enc SQBFAFgA",
+         {"path": "\\WinUpdate", "author": None, "action": "powershell.exe -w hidden -enc SQBFAFgA", "lolbin_or_userpath": True},
+         "high", "T1053.005"),
+        ("kernel_driver_added", t + 300, "new kernel driver: mimidrv (C:\\Users\\Public\\mimidrv.sys)",
+         {"name": "mimidrv", "path": "C:\\Users\\Public\\mimidrv.sys", "unusual_path": True}, "high", "T1543.003"),
         # And one attributed row, so the demo shows the agent's own script is
         # visible but not alerted on.
         ("powershell_block", t + 60, "PNMA's own script",
