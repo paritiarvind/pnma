@@ -365,6 +365,17 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
                          detail={'TargetUserName': 'Administrators', 'TargetSid': 'S-1-5-32-544',
                                  'MemberName': 'svc_helper', 'SubjectUserName': 'arvind'},
                          dedup_key='seed:newadmin')
+    # Connection endpoints: a regular beacon (low-jitter, ~10 min) and a
+    # brand-new external destination for a non-browser process, so the
+    # beaconing and new_external_destination rules fire on the demo.
+    import json as _json
+    beacon_samples = [now - 3 * 3600 + i * 600 for i in range(18)]
+    db.execute("INSERT INTO connection_endpoints(process, path, raddr, rport, first_seen, last_seen, sample_count, samples) VALUES(?,?,?,?,?,?,?,?)",
+               ('svc_helper.exe', 'C:/Users/Public/svc_helper.exe', '185.220.101.47', 8443,
+                beacon_samples[0], beacon_samples[-1], len(beacon_samples), _json.dumps(beacon_samples)))
+    db.execute("INSERT INTO connection_endpoints(process, path, raddr, rport, first_seen, last_seen, sample_count, samples) VALUES(?,?,?,?,?,?,?,?)",
+               ('svc_probe.exe', 'C:/Users/Public/svc_probe.exe', '45.13.7.22', 443,
+                now - 300, now - 300, 1, _json.dumps([now - 300])))
     return n
 
 

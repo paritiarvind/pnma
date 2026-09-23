@@ -303,6 +303,26 @@ CREATE TABLE IF NOT EXISTS auth_events (
 CREATE INDEX IF NOT EXISTS idx_auth_events_ts ON auth_events(ts, event_id);
 CREATE INDEX IF NOT EXISTS idx_auth_events_acct ON auth_events(account, ts);
 
+-- One row per (process, external destination) the host connected to
+-- (pnma.collectors.host_events). Compact -- an endpoint, not every packet --
+-- but it keeps the last N sample timestamps so a rule can measure cadence: a
+-- process that re-connects to one external ip:port at a fixed interval is the
+-- shape of a beacon, and a brand-new external endpoint for a non-browser
+-- process is worth a glance.
+CREATE TABLE IF NOT EXISTS connection_endpoints (
+    process      TEXT NOT NULL,
+    path         TEXT,
+    raddr        TEXT NOT NULL,
+    rport        INTEGER NOT NULL,
+    first_seen   REAL NOT NULL,
+    last_seen    REAL NOT NULL,
+    sample_count INTEGER NOT NULL DEFAULT 1,
+    samples      TEXT,                 -- JSON list of recent sample timestamps
+    PRIMARY KEY (process, raddr, rport)
+);
+CREATE INDEX IF NOT EXISTS idx_conn_endpoints_last ON connection_endpoints(last_seen);
+CREATE INDEX IF NOT EXISTS idx_conn_endpoints_first ON connection_endpoints(first_seen);
+
 CREATE TABLE IF NOT EXISTS host_software (
     software_id  TEXT PRIMARY KEY,      -- hive:registry key
     name         TEXT NOT NULL,
@@ -651,6 +671,34 @@ class Database:
              __import__("json").dumps(detail) if detail else None, dedup_key),
         )
         return cur.rowcount > 0
+
+    def record_connection_sample(self, *, process: str, path: str | None,
+                                 raddr: str, rport: int, ts: float,
+                                 keep: int = 40) -> bool:
+        """Upsert one external-connection sample. Returns True if this
+        (process, destination) was seen for the FIRST time."""
+        import json as _json
+
+        row = self.query_one(
+            "SELECT samples, sample_count FROM connection_endpoints "
+            "WHERE process = ? AND raddr = ? AND rport = ?", (process, raddr, rport))
+        if row is None:
+            self.execute(
+                "INSERT INTO connection_endpoints(process, path, raddr, rport, "
+                "first_seen, last_seen, sample_count, samples) VALUES(?,?,?,?,?,?,1,?)",
+                (process, path, raddr, rport, ts, ts, _json.dumps([ts])))
+            return True
+        try:
+            samples = _json.loads(row["samples"] or "[]")
+        except (TypeError, ValueError):
+            samples = []
+        samples.append(ts)
+        samples = samples[-keep:]
+        self.execute(
+            "UPDATE connection_endpoints SET last_seen = ?, sample_count = sample_count + 1, "
+            "samples = ? WHERE process = ? AND raddr = ? AND rport = ?",
+            (ts, _json.dumps(samples), process, raddr, rport))
+        return False
 
     def record_host_event(
         self,

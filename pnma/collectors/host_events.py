@@ -881,10 +881,16 @@ $out = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | F
         now = time.time()
         n = 0
         external = 0
+        first_seen_endpoints = 0
         for r in rows or []:
             if is_private_address(r.get("raddr") or ""):
                 continue
             external += 1
+            proc = (r.get("process") or "?").lower()
+            if self.db.record_connection_sample(process=proc, path=r.get("path"),
+                                                raddr=r.get("raddr"), rport=int(r.get("rport") or 0),
+                                                ts=now):
+                first_seen_endpoints += 1
             tags = classify_connection(r)
             sev = connection_severity(tags)
             if not sev:
@@ -895,10 +901,11 @@ $out = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | F
                           detail={**r, "tags": tags}, severity=sev, dedup_key=key,
                           mitre_id="T1090.003" if "tor_shaped" in tags else "T1105" if "script_host_network" in tags else "T1571"):
                 n += 1
+        self.db.execute("DELETE FROM connection_endpoints WHERE last_seen < ?", (now - 14 * 86400,))
         self.db.record_host_fact(
             fact_key="events.connections", category="network",
             title="Outbound connection sampling",
-            state="ok", value=f"{external} external connections sampled last run",
+            state="ok", value=f"{external} external connections sampled; {first_seen_endpoints} to a new destination",
             expected="sampled each run",
             reason="Only notable connections are recorded (script hosts, Tor-shaped ports, uncommon ports, binaries in user-writable paths). Ordinary browser and system traffic is not logged.",
         )

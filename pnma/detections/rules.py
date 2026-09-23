@@ -19,6 +19,7 @@ from ..collectors.confirm import confirmed_banners
 from .base import Detection, DetectionContext, Finding, downgrade, upgrade
 from .host_event_rules import host_event_rules
 from .auth_rules import auth_rules
+from .network_rules import network_rules
 from .sec555_rules import sec555_rules
 from .host_rules import host_rules
 from .identity_rules import identity_rules
@@ -721,4 +722,4 @@ def default_rules() -> list[Detection]:
         ProfileDeviationDetection(),
         AvailabilityDetection(),
         CVEExposureDetection(),
-    ] + host_rules() + identity_rules() + host_event_rules() + sec555_rules() + auth_rules()
+    ] + host_rules() + identity_rules() + host_event_rules() + sec555_rules() + auth_rules() + network_rules()
