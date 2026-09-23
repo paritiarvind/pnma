@@ -15,6 +15,14 @@
   Each half is started only if not already running, so running this twice is
   harmless. Logs go to logs/.
 #>
+# pnma-agent
+# ^ This marker attributes this script's PowerShell to PNMA itself. Windows
+# logs a running .ps1 as a 4104 script block; the collector treats any block
+# containing "# pnma-agent" as the agent's own (host_windows.AGENT_MARKER) and
+# does not raise suspicious_powershell on it -- exactly as it does for the
+# encoded one-liners `_ps` runs. Without this, PNMA's own collector-management
+# here (Get-CimInstance ... 'pnma collect', Get-ScheduledTask) reads as a
+# suspicious encoded/process-hunting block. Keep the marker verbatim.
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 New-Item -ItemType Directory -Force -Path "$root\logs" | Out-Null

@@ -18,6 +18,14 @@
 #>
 param([switch]$Remove)
 
+# pnma-agent
+# ^ Attributes this script's PowerShell to PNMA itself. The collector treats
+# any 4104 script block containing "# pnma-agent" as the agent's own
+# (host_windows.AGENT_MARKER) and does not raise suspicious_powershell on it.
+# This file registers the collector task and, on -Remove, hunts and stops the
+# 'pnma collect' processes -- process-enumeration that would otherwise read as
+# a suspicious block. Keep the marker verbatim.
+
 $ErrorActionPreference = 'Stop'
 $TaskName = 'Hearth collector (elevated)'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
