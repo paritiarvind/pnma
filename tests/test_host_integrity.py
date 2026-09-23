@@ -189,3 +189,39 @@ def test_firewall_rule_makes_a_finding():
                          severity="medium", dedup_key="fwrule:{rev}", mitre_id="T1562.004", sensor_id="host")
     f = rules.FirewallRuleAddedDetection().evaluate(DetectionContext(db=db, now=time.time()))
     assert len(f) == 1 and f[0].mitre_id == "T1562.004"
+
+
+# --------------------------------------------------------------- lateral
+
+def test_lateral_connection_first_seen_then_baselined(fake, monkeypatch):
+    # collect_connections uses _ps_marked via a different path (self._CONN_PS);
+    # patch it to return LAN-peer admin-port connections.
+    db = _db(); c = he.HostEventCollector(db)
+    conns = [
+        {"raddr": "192.168.0.145", "rport": 3389, "lport": 5000, "pid": 4120, "process": "powershell.exe", "path": "C:\W\ps.exe"},
+        {"raddr": "192.168.0.9", "rport": 445, "lport": 5001, "pid": 8, "process": "System", "path": ""},
+        {"raddr": "127.0.0.1", "rport": 3389, "lport": 5002, "pid": 9, "process": "loop.exe", "path": ""},   # loopback -> skip
+        {"raddr": "100.99.1.1", "rport": 22, "lport": 5003, "pid": 10, "process": "tailscaled.exe", "path": ""},  # tailnet -> skip
+        {"raddr": "192.168.0.20", "rport": 443, "lport": 5004, "pid": 11, "process": "chrome.exe", "path": ""},  # not an admin port -> skip
+    ]
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, conns, ""))
+    c.collect_connections()
+    assert not db.query("SELECT 1 FROM host_events WHERE kind='lateral_connection'")   # first run: baseline
+    c.collect_connections()                                                            # unchanged -> still nothing
+    ev = db.query("SELECT detail, severity FROM host_events WHERE kind='lateral_connection'")
+    assert ev == []
+    # a NEW lateral connection appears
+    conns.append({"raddr": "192.168.0.55", "rport": 5985, "lport": 5005, "pid": 12, "process": "wsmprovhost.exe", "path": ""})
+    c.collect_connections()
+    ev = db.query("SELECT detail FROM host_events WHERE kind='lateral_connection'")
+    assert len(ev) == 1 and json.loads(ev[0]["detail"])["rport"] == 5985
+
+
+def test_lateral_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="lateral_connection", ts=time.time() - 60,
+                         summary="powershell.exe -> 192.168.0.145:3389 (RDP), first seen",
+                         detail={"raddr": "192.168.0.145", "rport": 3389, "service": "RDP", "process": "powershell.exe", "pid": 1},
+                         severity="medium", dedup_key="lateral:x", mitre_id="T1021", sensor_id="host")
+    f = rules.InternalLateralConnectionDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "3389" in f[0].title

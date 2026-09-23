@@ -58,7 +58,7 @@ EVENT_KINDS = (
     "software_installed", "software_removed", "autorun_added", "autorun_removed",
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
-    "powershell_downgrade", "firewall_rule_added",
+    "powershell_downgrade", "firewall_rule_added", "lateral_connection",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -264,6 +264,14 @@ _PRIVATE = re.compile(r"^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.2
 
 def is_private_address(addr: str) -> bool:
     return bool(_PRIVATE.match(addr or ""))
+
+
+# A real LAN peer: RFC1918 or IPv6 ULA. Deliberately NOT loopback, link-local,
+# or the tailnet (100.64/10) -- those are "this host" or "yours", not a pivot.
+_LAN_PEER = re.compile(r"^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fd)")
+# Ports that carry lateral movement between machines on a LAN.
+_LATERAL_PORTS = {135: "RPC", 139: "NetBIOS", 445: "SMB", 3389: "RDP",
+                  5985: "WinRM", 5986: "WinRM/TLS", 22: "SSH"}
 
 
 def classify_connection(conn: dict) -> list[str]:
@@ -894,8 +902,29 @@ $out = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | F
         n = 0
         external = 0
         first_seen_endpoints = 0
+        lat_raw = self._meta("host_lateral_baseline")
+        lat_base = set(json.loads(lat_raw)) if lat_raw is not None else None
+        lat_seen: set[str] = set()
         for r in rows or []:
-            if is_private_address(r.get("raddr") or ""):
+            raddr = r.get("raddr") or ""
+            if is_private_address(raddr):
+                # Not external, but a LAN peer on a lateral-movement port is
+                # worth first-seen attention: this host pivoting to another.
+                rport = int(r.get("rport") or 0)
+                if _LAN_PEER.match(raddr) and rport in _LATERAL_PORTS:
+                    key = f"{(r.get('process') or '?').lower()}|{raddr}|{rport}"
+                    lat_seen.add(key)
+                    if lat_base is not None and key not in lat_base:
+                        svc = _LATERAL_PORTS[rport]
+                        hi = rport in (3389, 5985, 5986, 22)
+                        if self._emit(
+                                kind="lateral_connection", ts=now,
+                                summary=f"{r.get('process') or '?'} -> {raddr}:{rport} ({svc}), first seen",
+                                detail={"raddr": raddr, "rport": rport, "service": svc,
+                                        "process": r.get("process"), "path": r.get("path"), "pid": r.get("pid")},
+                                severity="medium" if hi else "low",
+                                dedup_key=f"lateral:{key}", mitre_id="T1021"):
+                            n += 1
                 continue
             external += 1
             proc = (r.get("process") or "?").lower()
@@ -914,6 +943,8 @@ $out = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | F
                           mitre_id="T1090.003" if "tor_shaped" in tags else "T1105" if "script_host_network" in tags else "T1571"):
                 n += 1
         self.db.execute("DELETE FROM connection_endpoints WHERE last_seen < ?", (now - 14 * 86400,))
+        # Update the lateral baseline (union: first run seeds it silently).
+        self._set_meta("host_lateral_baseline", json.dumps(sorted((lat_base or set()) | lat_seen)))
         self.db.record_host_fact(
             fact_key="events.connections", category="network",
             title="Outbound connection sampling",

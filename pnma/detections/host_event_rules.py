@@ -636,6 +636,41 @@ class FirewallRuleAddedDetection(_HostEventRule):
         )
 
 
+class InternalLateralConnectionDetection(_HostEventRule):
+    rule_id = "internal_lateral_connection"
+    name = "Internal connection on a lateral-movement port"
+    severity = "low"
+    kind = "lateral_connection"
+    mitre_id = "T1021"
+    mitre_name = "Remote Services"
+    requires = "this host's own established TCP connections to a LAN peer on an admin port (SMB/RDP/WinRM/SSH); diffed against the host's own first-seen baseline"
+    blind_spots = (
+        "This host's own outbound connections only -- it sees this machine reaching another, not "
+        "one LAN device talking to a third. First-seen per (process, peer, port): a connection you "
+        "make routinely (a file server on SMB) alerts once, then is baselined. Loopback, link-local "
+        "and the tailnet are excluded. It cannot see UDP or a session shorter than the sampling gap."
+    )
+
+    def describe(self, row, d):
+        svc = d.get("service") or "an admin service"
+        return (
+            f"This computer connected to {d.get('raddr')}:{d.get('rport')} ({svc})",
+            f"{row['summary']}\n\n"
+            f"  From process  {d.get('process') or '?'}\n"
+            f"  To            {d.get('raddr')}:{d.get('rport')} ({svc})\n\n"
+            "WHY THIS MATTERS: moving from one machine to another over SMB, RDP, WinRM or SSH is how "
+            "an intruder spreads across a network once they have a foothold. This host reaching a "
+            "LAN peer on one of those ports for the first time is that shape.\n\n"
+            "BENIGN EXPLANATION: you opened a file share on a NAS or another PC (SMB), remoted into "
+            "a machine yourself (RDP/SSH), or a backup/management tool runs on a schedule.\n\n"
+            "MALICIOUS EXPLANATION: you did not initiate it, the source process is a script host or "
+            "an unfamiliar binary, or the peer is a device that should not be offering that service.\n\n"
+            "NEXT STEP: match the peer against the Network tab. If it is your NAS/PC and you started "
+            "this, trust it and it will not alert again. If not, isolate this host and the peer and "
+            "investigate the process that made the connection."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -652,4 +687,5 @@ def host_event_rules() -> list[Detection]:
         NewListeningProcessDetection(),
         PowerShellDowngradeDetection(),
         FirewallRuleAddedDetection(),
+        InternalLateralConnectionDetection(),
     ]

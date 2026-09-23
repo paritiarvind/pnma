@@ -330,6 +330,9 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
          "high", "T1059.001"),
         ("firewall_rule_added", t + 240, "firewall inbound allow rule added: Allow TCP 4444 (any program)",
          {"name": "{7f3a-rev-shell}", "display": "Allow TCP 4444 (any program)", "group": None}, "medium", "T1562.004"),
+        ("lateral_connection", t + 250, "powershell.exe -> 192.168.0.145:3389 (RDP), first seen",
+         {"raddr": "192.168.0.145", "rport": 3389, "service": "RDP", "process": "powershell.exe",
+          "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "pid": 4120}, "medium", "T1021"),
         # And one attributed row, so the demo shows the agent's own script is
         # visible but not alerted on.
         ("powershell_block", t + 60, "PNMA's own script",
