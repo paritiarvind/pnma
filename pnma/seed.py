@@ -381,6 +381,12 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
                          detail={'TargetUserName': 'Administrators', 'TargetSid': 'S-1-5-32-544',
                                  'MemberName': 'svc_helper', 'SubjectUserName': 'arvind'},
                          dedup_key='seed:newadmin')
+    # A Remote Desktop logon (type 10) from an outside address on a host that
+    # does not normally accept RDP -> the anomalous_logon_type rule fires.
+    db.record_auth_event(ts=ta - 120, event_id=4624, account='arvind', domain='DESKTOP',
+                         source_ip='185.220.101.47', logon_type='10', status=None,
+                         detail={'TargetUserName': 'arvind', 'LogonType': '10', 'IpAddress': '185.220.101.47'},
+                         dedup_key='seed:rdp')
     # Connection endpoints: a regular beacon (low-jitter, ~10 min) and a
     # brand-new external destination for a non-browser process, so the
     # beaconing and new_external_destination rules fire on the demo.

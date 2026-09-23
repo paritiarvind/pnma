@@ -772,7 +772,7 @@ $res | ConvertTo-Json -Compress -Depth 4
 
     _AUTH_PS = r"""
 $since = %(since)s
-$xpath = "*[System[(EventID=4625 or EventID=4740 or EventID=4732) and (EventRecordID > $since)]]"
+$xpath = "*[System[(EventID=4625 or EventID=4740 or EventID=4732 or EventID=4624) and (EventRecordID > $since)]]"
 $out = @()
 try {
   $evs = @(Get-WinEvent -LogName Security -FilterXPath $xpath -Oldest -MaxEvents %(cap)s -ErrorAction Stop)
@@ -808,8 +808,14 @@ $res | ConvertTo-Json -Compress -Depth 4
                 d = {}
             eid = int(e.get("id") or 0)
             ts = float(e.get("t") or time.time())
+            # 4624 (successful logon) is high-volume; keep only the logon types
+            # that carry meaning on a home host -- 8 (cleartext), 9 (explicit
+            # credentials / runas), 10 (Remote Desktop). The rest (interactive,
+            # network, service) are the everyday noise this would drown in.
+            if eid == 4624 and str(d.get("LogonType")) not in ("8", "9", "10"):
+                continue
             # 4732 carries the group in TargetUserName and the member in
-            # MemberName/MemberSid; for 4625/4740 the account is TargetUserName.
+            # MemberName/MemberSid; for 4625/4740/4624 the account is TargetUserName.
             account = d.get("TargetUserName") or d.get("MemberName") or d.get("MemberSid")
             if self.db.record_auth_event(
                 ts=ts, event_id=eid, account=account,

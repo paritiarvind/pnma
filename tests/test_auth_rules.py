@@ -61,3 +61,48 @@ def test_lockout_and_new_admin():
     af = NewAdminMemberDetection().evaluate(DetectionContext(db=db, now=now))
     assert len(af) == 1 and af[0].evidence["member"] == "hacker"
     assert all(r.requires and "elevated" in r.requires for r in auth_rules())
+
+
+def test_anomalous_logon_type_flags_rdp_cleartext_explicit(_dbfix=None):
+    import tempfile, time
+    from pathlib import Path
+    from pnma.db import Database
+    from pnma.detections.base import DetectionContext
+    from pnma.detections.auth_rules import AnomalousLogonTypeDetection
+    db = Database(Path(tempfile.mkdtemp()) / "t.db")
+    now = time.time()
+    # type 10 (RDP) from outside, type 8 (cleartext), type 9 (runas), and a
+    # noisy type 3 that must NOT be stored/flagged (rule query excludes it).
+    db.record_auth_event(ts=now - 60, event_id=4624, account='arvind', domain='D', source_ip='185.220.101.47',
+                         logon_type='10', status=None, detail={'LogonType': '10'}, dedup_key='a')
+    db.record_auth_event(ts=now - 50, event_id=4624, account='svc', domain='D', source_ip='10.0.0.9',
+                         logon_type='8', status=None, detail={'LogonType': '8'}, dedup_key='b')
+    db.record_auth_event(ts=now - 40, event_id=4624, account='arvind', domain='D', source_ip=None,
+                         logon_type='9', status=None, detail={'LogonType': '9'}, dedup_key='c')
+    db.record_auth_event(ts=now - 30, event_id=4624, account='arvind', domain='D', source_ip=None,
+                         logon_type='3', status=None, detail={'LogonType': '3'}, dedup_key='d')
+    f = AnomalousLogonTypeDetection().evaluate(DetectionContext(db=db, now=now))
+    by = {x.evidence['logon_type']: x for x in f}
+    assert set(by) == {'10', '8', '9'}                       # type 3 excluded
+    assert by['8'].severity == 'high' and by['10'].severity == 'medium' and by['9'].severity == 'low'
+    assert '185.220.101.47' in by['10'].title
+
+
+def test_auth_collector_keeps_only_interesting_4624(monkeypatch):
+    import tempfile, time
+    from pathlib import Path
+    from pnma.collectors import host_events as he
+    from pnma.db import Database
+    db = Database(Path(tempfile.mkdtemp()) / "t.db")
+    now = int(time.time())
+    events = [
+        {"record": 1, "id": 4624, "t": now, "data": {"TargetUserName": "arvind", "LogonType": "10", "IpAddress": "9.9.9.9"}},
+        {"record": 2, "id": 4624, "t": now, "data": {"TargetUserName": "arvind", "LogonType": "2", "IpAddress": "-"}},   # interactive -> skip
+        {"record": 3, "id": 4624, "t": now, "data": {"TargetUserName": "arvind", "LogonType": "3", "IpAddress": "-"}},   # network -> skip
+        {"record": 4, "id": 4625, "t": now, "data": {"TargetUserName": "arvind", "LogonType": "3", "IpAddress": "1.2.3.4"}},  # failure -> keep
+    ]
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "events": events, "max": 4}, ""))
+    c = he.HostEventCollector(db)
+    c._collect_auth()
+    kept = db.query("SELECT event_id, logon_type FROM auth_events ORDER BY id")
+    assert [(r["event_id"], r["logon_type"]) for r in kept] == [(4624, "10"), (4625, "3")]

@@ -239,10 +239,79 @@ class NewAdminMemberDetection(Detection):
         return out
 
 
+class AnomalousLogonTypeDetection(Detection):
+    """A successful logon of a type that is unusual on a home host: a Remote
+    Desktop session, a cleartext network logon, or an explicit-credential
+    (runas / pass-the-hash-shaped) logon."""
+
+    rule_id = "anomalous_logon_type"
+    name = "Unusual successful logon type"
+    severity = "medium"
+    mitre_id = "T1021.001"
+    mitre_name = "Remote Services: Remote Desktop Protocol"
+    requires = "Security log event 4624 (successful logon), LogonType 8/9/10 -- needs the collector running elevated"
+    blind_spots = (
+        "Reads only the logon types kept as interesting (8 cleartext, 9 explicit "
+        "credentials, 10 Remote Desktop); ordinary interactive and network logons "
+        "are not stored, so this cannot baseline 'normal' beyond those. If you use "
+        "Remote Desktop routinely it will flag each new source once per day -- trust "
+        "the source and it stops being news. It sees a logon succeeded, not what the "
+        "session then did."
+    )
+    WINDOW_S = 24 * 3600
+    _MEANING = {
+        "8": ("high", "Cleartext network logon", "T1078", "Valid Accounts",
+              "credentials crossed the network in the clear (HTTP Basic, an old protocol, a "
+              "misconfigured service) -- anyone watching the wire could read them"),
+        "9": ("low", "Explicit-credential logon (runas / NewCredentials)", "T1078", "Valid Accounts",
+              "a process authenticated as another account with fresh credentials -- runas or a "
+              "scheduled task normally, but also the shape of pass-the-hash"),
+        "10": ("medium", "Remote Desktop (RDP) logon", "T1021.001", "Remote Services: RDP",
+               "someone opened an interactive Remote Desktop session to this machine's desktop "
+               "from elsewhere"),
+    }
+
+    def evaluate(self, ctx: DetectionContext) -> list[Finding]:
+        rows = ctx.db.query(
+            "SELECT logon_type, account, source_ip, COUNT(*) n, MIN(ts) first, MAX(ts) last "
+            "FROM auth_events WHERE event_id = 4624 AND ts >= ? AND logon_type IN ('8','9','10') "
+            "GROUP BY logon_type, source_ip",
+            (ctx.now - self.WINDOW_S,))
+        out = []
+        for r in rows:
+            lt = str(r["logon_type"])
+            sev, label, mitre, mitre_name, why = self._MEANING.get(
+                lt, ("low", "Logon type " + lt, "T1078", "Valid Accounts", ""))
+            src = r["source_ip"]
+            out.append(Finding(
+                dedup_key="logontype:%s:%s:%d" % (lt, src or "local", int(r["first"] // self.WINDOW_S)),
+                severity=sev,
+                title=label + ((" from " + src) if src else ""),
+                description=(
+                    label + (" from " + src if src else "") +
+                    (" (account '" + r["account"] + "')" if r["account"] else "") +
+                    ", seen " + str(r["n"]) + (" time" if r["n"] == 1 else " times") + " in the last day.\n\n"
+                    "WHY THIS MATTERS: " + why + ".\n\n"
+                    "BENIGN EXPLANATION: you use Remote Desktop, `runas`, or a scheduled task with "
+                    "stored credentials; a family device signs in over the network.\n\n"
+                    "MALICIOUS EXPLANATION: you do not use Remote Desktop and the source is an "
+                    "address you cannot place; or a cleartext logon is happening at all, which on a "
+                    "modern setup usually should not.\n\n"
+                    "NEXT STEP: if it is not you, change the account's password from another device "
+                    "and check the source in the Investigation log. If you never use Remote Desktop, "
+                    "turn it off (System > Remote Desktop) and block 3389 at the firewall."
+                ),
+                evidence={"logon_type": lt, "account": r["account"], "source_ip": src, "count": r["n"]},
+                mitre_id=mitre, mitre_name=mitre_name,
+            ))
+        return out
+
+
 def auth_rules() -> list[Detection]:
     return [
         BruteForceDetection(),
         PasswordSprayDetection(),
         AccountLockoutDetection(),
         NewAdminMemberDetection(),
+        AnomalousLogonTypeDetection(),
     ]
