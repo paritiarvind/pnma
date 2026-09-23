@@ -343,6 +343,28 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
         sent += rate * 300
         db.execute("INSERT INTO host_counters(ts, adapter, bytes_sent, bytes_recv) VALUES(?,?,?,?)",
                    (ts, "Wi-Fi", sent, sent * 3))
+    # Auth events (Security log): a spray, a brute force, a lockout and an
+    # addition to Administrators, so each auth rule fires on the demo.
+    ta = now - 300
+    for i, acct in enumerate(('admin', 'guest', 'test', 'backup', 'sql')):
+        db.record_auth_event(ts=ta - i * 20, event_id=4625, account=acct, domain='DESKTOP',
+                             source_ip='185.220.101.47', logon_type='3', status='0xC000006A',
+                             detail={'TargetUserName': acct, 'IpAddress': '185.220.101.47'},
+                             dedup_key='seed:spray:%d' % i)
+    for i in range(9):
+        db.record_auth_event(ts=ta - i * 10, event_id=4625, account='arvind', domain='DESKTOP',
+                             source_ip='192.168.0.55', logon_type='3', status='0xC000006A',
+                             detail={'TargetUserName': 'arvind', 'IpAddress': '192.168.0.55'},
+                             dedup_key='seed:brute:%d' % i)
+    db.record_auth_event(ts=ta, event_id=4740, account='arvind', domain=None, source_ip=None,
+                         logon_type=None, status=None,
+                         detail={'TargetUserName': 'arvind', 'SubjectUserName': 'DESKTOP$'},
+                         dedup_key='seed:lockout')
+    db.record_auth_event(ts=ta - 3600, event_id=4732, account='Administrators', domain=None,
+                         source_ip=None, logon_type=None, status=None,
+                         detail={'TargetUserName': 'Administrators', 'TargetSid': 'S-1-5-32-544',
+                                 'MemberName': 'svc_helper', 'SubjectUserName': 'arvind'},
+                         dedup_key='seed:newadmin')
     return n
 
 

@@ -283,6 +283,26 @@ CREATE TABLE IF NOT EXISTS host_events (
 );
 CREATE INDEX IF NOT EXISTS idx_host_events_ts ON host_events(ts);
 CREATE INDEX IF NOT EXISTS idx_host_events_kind ON host_events(kind, ts);
+-- Authentication events from the Windows Security log (pnma.collectors.
+-- host_events, only when the collector runs elevated): failed logons (4625),
+-- account lockouts (4740), and additions to a security group (4732). Kept as
+-- rows so rules can aggregate -- a password spray is a shape across many of
+-- them, not any single one.
+CREATE TABLE IF NOT EXISTS auth_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL NOT NULL,
+    event_id    INTEGER NOT NULL,      -- 4625 | 4740 | 4732
+    account     TEXT,                  -- the target account
+    domain      TEXT,
+    source_ip   TEXT,
+    logon_type  TEXT,
+    status      TEXT,
+    detail      TEXT,                  -- JSON: the full EventData
+    dedup_key   TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_auth_events_ts ON auth_events(ts, event_id);
+CREATE INDEX IF NOT EXISTS idx_auth_events_acct ON auth_events(account, ts);
+
 CREATE TABLE IF NOT EXISTS host_software (
     software_id  TEXT PRIMARY KEY,      -- hive:registry key
     name         TEXT NOT NULL,
@@ -616,6 +636,19 @@ class Database:
             "INSERT OR IGNORE INTO router_events(ts, kind, severity, title, ip, mac, line, dedup_key) "
             "VALUES(?,?,?,?,?,?,?,?)",
             (ts, kind, severity, title, ip, mac, line, dedup_key),
+        )
+        return cur.rowcount > 0
+
+    def record_auth_event(self, *, ts: float, event_id: int, account: str | None,
+                          domain: str | None, source_ip: str | None,
+                          logon_type: str | None, status: str | None,
+                          detail: dict | None, dedup_key: str) -> bool:
+        """Persist one Windows auth event; False if this record was seen before."""
+        cur = self.execute(
+            "INSERT OR IGNORE INTO auth_events(ts, event_id, account, domain, source_ip, "
+            "logon_type, status, detail, dedup_key) VALUES(?,?,?,?,?,?,?,?,?)",
+            (ts, event_id, account, domain, source_ip, logon_type, status,
+             __import__("json").dumps(detail) if detail else None, dedup_key),
         )
         return cur.rowcount > 0
 

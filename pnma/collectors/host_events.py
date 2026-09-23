@@ -741,6 +741,7 @@ $res | ConvertTo-Json -Compress -Depth 4
             evs, err = self._read_log("Security", [4698, 1102, 4720], "host_events_cursor_security")
             if err:
                 problems.append("Security: " + err)
+            n += self._collect_auth()
             for e in evs:
                 props = e.get("props") or []
                 ts = float(e.get("t") or time.time())
@@ -762,6 +763,60 @@ $res | ConvertTo-Json -Compress -Depth 4
                                dedup_key=f"sec4720:{e.get('record')}", mitre_id="T1136.001")
                     n += 1
         return n, "; ".join(problems)
+
+    _AUTH_PS = r"""
+$since = %(since)s
+$xpath = "*[System[(EventID=4625 or EventID=4740 or EventID=4732) and (EventRecordID > $since)]]"
+$out = @()
+try {
+  $evs = @(Get-WinEvent -LogName Security -FilterXPath $xpath -Oldest -MaxEvents %(cap)s -ErrorAction Stop)
+  foreach ($e in $evs) {
+    $d = @{}
+    try { $x = [xml]$e.ToXml(); foreach ($n in $x.Event.EventData.Data) { if ($n.Name) { $d[[string]$n.Name] = [string]$n."#text" } } } catch {}
+    $out += [pscustomobject]@{ record = $e.RecordId; id = $e.Id; t = [int]([DateTimeOffset]$e.TimeCreated).ToUnixTimeSeconds(); data = $d }
+  }
+  $res = [pscustomobject]@{ ok = $true; events = $out; max = ($evs | Measure-Object -Property RecordId -Maximum).Maximum; saturated = ($evs.Count -ge %(cap)s) }
+} catch {
+  if ($_.Exception.Message -match 'No events were found') { $res = [pscustomobject]@{ ok = $true; events = @(); max = $null } }
+  else { $res = [pscustomobject]@{ ok = $false; error = $_.Exception.Message } }
+}
+$res | ConvertTo-Json -Compress -Depth 4
+"""
+
+    def _collect_auth(self) -> int:
+        """Read 4625/4740/4732 from the Security log into auth_events. Only
+        reached when the Security log is readable (elevated). Returns the
+        number of new rows."""
+        since = int(self._meta("host_events_cursor_auth") or 0)
+        script = self._AUTH_PS % {"since": since, "cap": self.WINEVENT_CAP}
+        ok, res, err = _ps_marked(script, timeout=90)
+        if not ok or not (res or {}).get("ok"):
+            return 0
+        events = res.get("events") or []
+        if isinstance(events, dict):
+            events = [events]
+        n = 0
+        for e in events:
+            d = e.get("data") or {}
+            if not isinstance(d, dict):
+                d = {}
+            eid = int(e.get("id") or 0)
+            ts = float(e.get("t") or time.time())
+            # 4732 carries the group in TargetUserName and the member in
+            # MemberName/MemberSid; for 4625/4740 the account is TargetUserName.
+            account = d.get("TargetUserName") or d.get("MemberName") or d.get("MemberSid")
+            if self.db.record_auth_event(
+                ts=ts, event_id=eid, account=account,
+                domain=d.get("TargetDomainName") or d.get("SubjectDomainName"),
+                source_ip=(d.get("IpAddress") if d.get("IpAddress") not in ("-", "::1", "127.0.0.1") else None),
+                logon_type=d.get("LogonType"), status=d.get("Status") or d.get("SubStatus"),
+                detail=d, dedup_key="auth:%s:%s" % (eid, e.get("record")),
+            ):
+                n += 1
+        mx = res.get("max")
+        if mx:
+            self._set_meta("host_events_cursor_auth", str(int(mx)))
+        return n
 
     # -- hidden directories --------------------------------------------------
 
