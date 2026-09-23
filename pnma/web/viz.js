@@ -465,7 +465,7 @@
   PNMA.onChange = (fn) => { live.refreshers.push(fn); };
   PNMA.refreshAll = (why) => {
     live.lastChange = Date.now();
-    const fns = [loadOverview, loadMap, loadActivity, loadAttack, loadIdentity, loadAgent,
+    const fns = [loadOverview, loadMap, loadDeviceActivity, loadActivity, loadAttack, loadIdentity, loadAgent,
                  PNMA.loadAlerts, PNMA.loadDevices, PNMA.loadHostPosture, PNMA.loadAvailability].concat(live.refreshers);
     for (const fn of fns) { if (typeof fn === 'function') { try { const r = fn(why); if (r && r.catch) r.catch(() => {}); } catch (e) { /* a panel reports its own failure */ } } }
     document.dispatchEvent(new CustomEvent('pnma:change', { detail: { why } }));
@@ -1091,6 +1091,51 @@
   const KIND_LABEL = { discovery_sweep: 'discovery', arp_table_read: 'arp cache', ping: 'ping',
                        port_scan: 'port scan', host_posture: 'host posture', passive: 'passive', detect: 'detect' };
 
+
+  /* ==================================================== activity by device */
+
+  async function loadDeviceActivity() {
+    const body = document.getElementById('devactivity-body');
+    if (!body) return;
+    try {
+      const data = await getJSON('/api/activity');
+      const devs = (data.devices || []).filter((d) => d.seen_30d > 0);
+      const sig = JSON.stringify(devs.map((d) => [d.device_id, d.seen_7d, d.online_now, d.active_hour_count]));
+      if (body.dataset.sig === sig) return;
+      body.dataset.sig = sig;
+      clear(body);
+      if (!devs.length) {
+        body.appendChild(el('div', { class: 'empty' }, [
+          el('strong', { text: 'No passive activity yet.' }),
+          el('p', { text: 'This fills in as the collector sees devices on the network. Byte-level usage per device would need the router.' }),
+        ]));
+        return;
+      }
+      const max = Math.max.apply(null, devs.map((d) => d.seen_7d)) || 1;
+      body.appendChild(el('p', { class: 'section__note', text: data.note }));
+      body.appendChild(el('div', { class: 'hbars' }, devs.map((d) => {
+        const pct = Math.max(2, Math.round((d.seen_7d / max) * 100));
+        const track = el('div', { class: 'hbar__track' }, [
+          el('div', { class: 'hbar__fill' + (d.trusted ? ' hbar__fill--mine' : ''), style: 'width:' + pct + '%' }),
+        ]);
+        const row = el('button', {
+          class: 'hbar hbar--btn' + (d.online_now ? ' is-online' : ''),
+          type: 'button', title: 'Open ' + d.name,
+        }, [
+          el('span', { class: 'hbar__label' }, [
+            el('span', { class: 'devdot' + (d.online_now ? ' devdot--on' : '') }),
+            d.name,
+          ]),
+          track,
+          el('span', { class: 'hbar__value', text: d.seen_7d + ' seen \u00b7 ' + d.active_hour_count + 'h/24' }),
+        ]);
+        if (d.device_id) row.addEventListener('click', () => openSheet(d.device_id));
+        return row;
+      })));
+    } catch (err) { fail(body, 'device activity', err); }
+  }
+  PNMA.loadDeviceActivity = loadDeviceActivity;
+
   async function loadActivity() {
     const body = document.getElementById('activity-body');
     try {
@@ -1470,9 +1515,10 @@
       for (const x of d.devices || []) PNMA.learnName(x.hostname);
       for (const x of s.sensors || []) PNMA.learnName(x.hostname);
     }).catch(() => { /* the gate or a dead API; the panels report that themselves */ });
-    loadOverview(); loadMap(); loadActivity(); loadAttack(); loadIdentity(); loadAgent(); loadLogs();
+    loadOverview(); loadMap(); loadDeviceActivity(); loadActivity(); loadAttack(); loadIdentity(); loadAgent(); loadLogs();
     every(loadOverview, 60000);
     every(loadMap, 60000);
+    every(loadDeviceActivity, 60000);
     every(loadActivity, 60000);
     every(loadAttack, 120000);
     every(loadIdentity, 120000);

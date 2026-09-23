@@ -1967,3 +1967,12 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .recent .evlog__head { grid-template-columns: max-content 1fr; padding: 6px 8px; }
 .recent .evlog__kind, .recent .evlog__src { display: none; }
 @media (max-width: 640px) { .rings { grid-template-columns: 1fr; } .ringcard { padding: var(--s2) var(--s3); } .ring { width: 92px; height: 92px; } }
+
+/* ---- activity by device -------------------------------------------------- */
+.hbar--btn { width: 100%; border: 0; background: transparent; cursor: pointer; text-align: left; padding: 4px 6px; border-radius: var(--radius-sm); font: inherit; }
+.hbar--btn:hover { background: var(--bg-raised); }
+.hbar--btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.hbar__label { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); }
+.hbar__fill--mine { background: var(--lamp); }
+.devdot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-dim); flex: none; }
+.devdot--on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
