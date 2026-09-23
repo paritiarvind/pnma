@@ -198,7 +198,7 @@ def test_lateral_connection_first_seen_then_baselined(fake, monkeypatch):
     # patch it to return LAN-peer admin-port connections.
     db = _db(); c = he.HostEventCollector(db)
     conns = [
-        {"raddr": "192.168.0.145", "rport": 3389, "lport": 5000, "pid": 4120, "process": "powershell.exe", "path": "C:\W\ps.exe"},
+        {"raddr": "192.168.0.145", "rport": 3389, "lport": 5000, "pid": 4120, "process": "powershell.exe", "path": r"C:\W\ps.exe"},
         {"raddr": "192.168.0.9", "rport": 445, "lport": 5001, "pid": 8, "process": "System", "path": ""},
         {"raddr": "127.0.0.1", "rport": 3389, "lport": 5002, "pid": 9, "process": "loop.exe", "path": ""},   # loopback -> skip
         {"raddr": "100.99.1.1", "rport": 22, "lport": 5003, "pid": 10, "process": "tailscaled.exe", "path": ""},  # tailnet -> skip
