@@ -646,9 +646,11 @@
 
     const head = el('div', { class: 'pb__head' }, [
       el('div', { class: 'pb__badge', text: v.icon }),
-      el('div', {}, [
+      el('div', { class: 'pb__lede' }, [
         el('div', { class: 'pb__verdict', text: v.word }),
         el('div', { class: 'pb__summary', text: summaryLine }),
+        (counts.critical || counts.high || counts.medium || counts.low)
+          ? el('div', { class: 'pb__sev' }, [severityBar(counts)]) : null,
       ]),
       el('div', { class: 'pb__meta' }, [
         el('span', { class: 'pb__updated', text: 'updated ' + relativeTime(summary.generated_at || Date.now() / 1000) }),
@@ -670,9 +672,10 @@
         getRaw('/api/summary'), getRaw('/api/host'), getRaw('/api/identity'),
         getRaw('/api/devices'), getRaw('/api/sensors'), getRaw('/api/alerts?status=open&limit=100'),
         getRaw('/api/events?hours=24&limit=14&agent=false&kinds=alert,alert_change,observation,host_event,port,availability'),
+        getRaw('/api/audit'),
       ]);
       if (unchanged('overview', raw.map((r) => r.text).join('\u0000'), body.firstChild)) return;
-      const [summary, host, identity, devices, sensors, alertList, recent] = raw.map((r) => r.json);
+      const [summary, host, identity, devices, sensors, alertList, recent, audit] = raw.map((r) => r.json);
       for (const d of devices.devices) PNMA.learnName(d.hostname);
       for (const s of sensors.sensors) PNMA.learnName(s.hostname);
 
@@ -692,15 +695,12 @@
       ]);
 
       const alerts = summary.alerts;
-      const tiles = el('div', { class: 'tiles' }, [
-        tile(onlineN + ' / ' + summary.devices.total, 'devices online',
-             { foot: summary.devices.untrusted_online + ' untrusted online', cls: summary.devices.untrusted_online ? 'tile--warn' : '', tab: 'network' }),
-        tile(alerts.open, plural(alerts.open, 'open alert'), { child: severityBar(alerts.by_severity || {}),
-             cls: (alerts.by_severity || {}).critical || (alerts.by_severity || {}).high ? 'tile--bad' : '', tab: 'alerts' }),
+      // A tight metric strip of the three live numbers the rings and banner
+      // do not already carry -- attack surface, reachability, round-trip.
+      const tiles = el('div', { class: 'tiles tiles--strip' }, [
         tile(openPorts, plural(openPorts, 'open port'), { foot: risky ? risky + ' flagged risky' : 'none flagged risky', cls: risky ? 'tile--warn' : '', tab: 'network' }),
         tile(fmtPct(summary.availability_24h_pct), 'reachable, 24h', { foot: summary.availability_24h_pct === null ? 'no samples yet' : 'across all devices', tab: 'network' }),
         tile(fmtMs(summary.latency_1h.avg_ms), 'avg round-trip, 1h', { foot: summary.latency_1h.samples + ' samples, max ' + fmtMs(summary.latency_1h.max_ms), tab: 'network' }),
-        tile(hs.unknown + is.unknown + net.unknown, 'unmeasured controls', { foot: 'each one is a point you can win back', cls: 'tile--unknown', tab: 'host' }),
       ]);
 
       // Gaps to close: the gamification loop. Sorted so the cheapest wins
@@ -750,6 +750,19 @@
         el('h3', { class: 'gaps__title', text: gaps.length ? gaps.length + ' ' + plural(gaps.length, 'gap') + ' to close' : 'No gaps. Every control measured and passing.' }),
         list, more,
       ]);
+
+      const scope = document.getElementById('overview-scope');
+      if (scope) {
+        const auth = (audit && audit.authorisation) || {};
+        clear(scope);
+        if (auth.authorised_cidr)
+          scope.appendChild(el('span', { class: 'scope__pill scope__pill--net',
+            title: 'The only network this agent is allowed to touch', text: auth.authorised_cidr }));
+        scope.appendChild(el('span', {
+          class: 'scope__pill scope__pill--' + (auth.gateway_pinned ? 'ok' : 'warn'),
+          title: auth.reason || 'The gateway is the trust anchor for the whole network.',
+          text: auth.gateway_pinned ? 'gateway pinned' : 'gateway unverified' }));
+      }
 
       clear(body);
       body.appendChild(postureBanner(summary, alertList.alerts || [], gaps.length, devices.devices));
