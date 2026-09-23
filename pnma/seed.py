@@ -346,6 +346,8 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
          "high", "T1053.005"),
         ("kernel_driver_added", t + 300, "new kernel driver: mimidrv (C:\\Users\\Public\\mimidrv.sys)",
          {"name": "mimidrv", "path": "C:\\Users\\Public\\mimidrv.sys", "unusual_path": True}, "high", "T1543.003"),
+        ("credential_hive_dump", t + 310, "credential-dump artifact (registry hive): C:\\Windows\\Temp\\sam",
+         {"name": "sam", "path": "C:\\Windows\\Temp\\sam", "artifact": "registry hive"}, "high", "T1003.002"),
         # And one attributed row, so the demo shows the agent's own script is
         # visible but not alerted on.
         ("powershell_block", t + 60, "PNMA's own script",

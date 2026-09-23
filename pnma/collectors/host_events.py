@@ -59,7 +59,7 @@ EVENT_KINDS = (
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
     "powershell_downgrade", "firewall_rule_added", "lateral_connection",
-    "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed", "scheduled_task_added", "kernel_driver_added",
+    "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed", "scheduled_task_added", "kernel_driver_added", "credential_hive_dump",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -390,6 +390,7 @@ class HostEventCollector:
             ("admin_group", self.collect_admin_group),
             ("scheduled_tasks", self.collect_scheduled_tasks),
             ("kernel_drivers", self.collect_kernel_drivers),
+            ("cred_dumps", self.collect_cred_dumps),
         ):
             try:
                 n, unknown = fn()
@@ -1478,4 +1479,54 @@ try {
                         dedup_key=f"driver:{name}", mitre_id="T1543.003"):
                     n += 1
         self._set_meta("host_driver_baseline", json.dumps(sorted(current)))
+        return n, ""
+
+
+    # -- credential-dump artifacts (SEC555 WB1 Lab 2.3: SAM/LSASS theft) ------
+    #
+    # Filename match only -- NO file contents are ever read -- over a fixed set
+    # of throwaway directories, the same consent scope as the hidden-directory
+    # walker. `reg save HKLM\SAM sam` and lsass dumps leave files literally
+    # named sam/system/security or *lsass*.dmp where they should never be.
+
+    _CREDDUMP_PS = r"""
+param()
+$out = @()
+$hiveDirs = @($env:TEMP, "$env:LOCALAPPDATA\Temp", "$env:windir\Temp") | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+foreach ($dir in $hiveDirs) {
+  Get-ChildItem -LiteralPath $dir -File -Force -ErrorAction SilentlyContinue | Where-Object {
+    ($_.Extension -eq '' -and ($_.Name -ieq 'sam' -or $_.Name -ieq 'system' -or $_.Name -ieq 'security'))
+  } | ForEach-Object { $out += [pscustomobject]@{ name=[string]$_.Name; path=[string]$_.FullName; kind='hive' } }
+}
+$dmpDirs = @($env:TEMP, "$env:LOCALAPPDATA\Temp", "$env:windir\Temp", $env:PUBLIC, "$env:USERPROFILE\Downloads") | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+foreach ($dir in $dmpDirs) {
+  Get-ChildItem -LiteralPath $dir -File -Force -Filter '*lsass*' -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ieq '.dmp' } |
+    ForEach-Object { $out += [pscustomobject]@{ name=[string]$_.Name; path=[string]$_.FullName; kind='lsass_dump' } }
+}
+[pscustomobject]@{ ok=$true; hits=$out } | ConvertTo-Json -Compress -Depth 4
+"""
+
+    def collect_cred_dumps(self) -> tuple[int, str]:
+        """Registry-hive (SAM/SYSTEM/SECURITY) and LSASS-dump files sitting in a
+        temp directory -- the on-disk residue of credential theft. Filename
+        match only; contents are never read."""
+        ok, res, err = _ps_marked(self._CREDDUMP_PS, timeout=90)
+        if not ok:
+            return 0, f"credential-dump scan: {err}"
+        if not res.get("ok"):
+            return 0, f"credential-dump scan: {res.get('error')}"
+        hits = res.get("hits") or []
+        if isinstance(hits, dict):
+            hits = [hits]
+        now = time.time()
+        n = 0
+        for h in hits:
+            what = "registry hive" if h.get("kind") == "hive" else "LSASS memory dump"
+            if self._emit(
+                    kind="credential_hive_dump", ts=now,
+                    summary=f"credential-dump artifact ({what}): {h.get('path')}",
+                    detail={"name": h.get("name"), "path": h.get("path"), "artifact": what},
+                    severity="high", dedup_key=f"creddump:{h.get('path')}",
+                    mitre_id="T1003.001" if h.get("kind") == "lsass_dump" else "T1003.002"):
+                n += 1
         return n, ""

@@ -857,6 +857,40 @@ class KernelDriverAddedDetection(_HostEventRule):
         )
 
 
+class CredentialDumpArtifactDetection(_HostEventRule):
+    rule_id = "credential_dump_artifact"
+    name = "Credential-dump artifact on disk"
+    severity = "high"
+    kind = "credential_hive_dump"
+    mitre_id = "T1003.002"
+    mitre_name = "OS Credential Dumping: Security Account Manager"
+    requires = "filenames (never contents) under Temp/LocalAppData Temp/Windows Temp/Public/Downloads: sam/system/security hives and *lsass*.dmp"
+    blind_spots = (
+        "Matches filenames only, in a fixed set of throwaway directories -- it never opens a file, "
+        "and a dump written elsewhere or renamed is missed. A hive named sam/system/security or an "
+        "lsass .dmp in a temp folder is almost never legitimate, so the false-positive rate is very "
+        "low; the one benign case is a crash dump of lsass, or a manual Task Manager dump."
+    )
+
+    def describe(self, row, d):
+        return (
+            f"{d.get('artifact') or 'Credential-dump artifact'} in a temp folder",
+            f"{row['summary']}\n\n  File  {d.get('path') or '?'}\n\n"
+            "WHY THIS MATTERS: this is the on-disk residue of credential theft. The SAM/SYSTEM/"
+            "SECURITY registry hives hold local password hashes; an lsass dump holds the passwords "
+            "and tokens of everyone logged in. Finding one in a temp folder means someone was "
+            "harvesting credentials on this machine.\n\n"
+            "BENIGN EXPLANATION: a real crash produced an lsass dump, or you dumped a process "
+            "yourself for debugging. Hive files named sam/system/security in temp have essentially "
+            "no benign explanation.\n\n"
+            "MALICIOUS EXPLANATION: you did not create it -- treat every credential that could be on "
+            "this machine as compromised.\n\n"
+            "NEXT STEP: do NOT open the file. Capture it with `pnma quarantine '<path>'` for the "
+            "record, then change the passwords of every account used on this machine from another "
+            "device, and treat the host as compromised until you find how it got there."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -879,4 +913,5 @@ def host_event_rules() -> list[Detection]:
         LocalAdminGroupDiffDetection(),
         ScheduledTaskAddedDetection(),
         KernelDriverAddedDetection(),
+        CredentialDumpArtifactDetection(),
     ]
