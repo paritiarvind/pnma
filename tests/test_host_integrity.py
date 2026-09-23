@@ -33,6 +33,7 @@ class FakeMarked:
         self.hosts_lines = []
         self.listeners = []
         self.ps400 = []
+        self.firewall = []
 
     def __call__(self, script, timeout=60):
         if "Cert:" in script:
@@ -41,6 +42,8 @@ class FakeMarked:
             return True, {"ok": True, "lines": self.hosts_lines}, ""
         if "-State Listen" in script:
             return True, {"ok": True, "listeners": self.listeners}, ""
+        if "Get-NetFirewallRule" in script:
+            return True, {"ok": True, "rules": self.firewall}, ""
         if "Windows PowerShell" in script:
             mx = max((e["record"] for e in self.ps400), default=None)
             return True, {"ok": True, "events": self.ps400, "max": mx}, ""
@@ -159,3 +162,30 @@ def test_ps_downgrade_rule_makes_a_finding():
                          severity="high", dedup_key="psdown:10", mitre_id="T1059.001", sensor_id="host")
     f = rules.PowerShellDowngradeDetection().evaluate(DetectionContext(db=db, now=time.time()))
     assert len(f) == 1 and "v2.0" in f[0].title and f[0].mitre_id == "T1059.001"
+
+
+# --------------------------------------------------------------- firewall
+
+def test_new_firewall_allow_rule_alerts_after_baseline(fake):
+    db = _db(); c = he.HostEventCollector(db)
+    fake.firewall = [{"name": "{core-1}", "display": "Core Networking", "group": "Core Networking"}]
+    assert c.collect_firewall_rules() == (0, "")             # first run: baseline
+    fact = db.query_one("SELECT state, value FROM host_facts WHERE fact_key = 'integrity.firewall_rules'")
+    assert fact["state"] == "ok" and "1 inbound" in fact["value"]
+
+    fake.firewall = fake.firewall + [{"name": "{rev-shell}", "display": "Allow TCP 4444", "group": None}]
+    n, err = c.collect_firewall_rules()
+    assert n == 1
+    ev = _events(db, "firewall_rule_added")
+    assert len(ev) == 1 and ev[0]["severity"] == "medium"
+    assert "4444" in json.loads(ev[0]["detail"])["display"]
+
+
+def test_firewall_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="firewall_rule_added", ts=time.time() - 60,
+                         summary="firewall inbound allow rule added: Allow TCP 4444",
+                         detail={"name": "{rev}", "display": "Allow TCP 4444", "group": None},
+                         severity="medium", dedup_key="fwrule:{rev}", mitre_id="T1562.004", sensor_id="host")
+    f = rules.FirewallRuleAddedDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and f[0].mitre_id == "T1562.004"

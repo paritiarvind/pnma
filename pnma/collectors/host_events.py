@@ -58,7 +58,7 @@ EVENT_KINDS = (
     "software_installed", "software_removed", "autorun_added", "autorun_removed",
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
-    "powershell_downgrade",
+    "powershell_downgrade", "firewall_rule_added",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -375,6 +375,7 @@ class HostEventCollector:
             ("hosts_file", self.collect_hosts_file),
             ("listeners", self.collect_listeners),
             ("ps_downgrade", self.collect_ps_downgrade),
+            ("firewall_rules", self.collect_firewall_rules),
         ):
             try:
                 n, unknown = fn()
@@ -1127,3 +1128,53 @@ try {
                     severity="high", dedup_key=f"psdown:{e.get('record')}", mitre_id="T1059.001"):
                 n += 1
         return n, (err or "")
+
+
+    # -- inbound firewall allow rules (SEC555 Book 2: Firewall Audit) ---------
+
+    _FIREWALL_PS = r"""
+param()
+$out = @()
+try {
+  Get-NetFirewallRule -Enabled True -Direction Inbound -ErrorAction Stop |
+    Where-Object { $_.Action -eq 'Allow' } | ForEach-Object {
+      $out += [pscustomobject]@{ name=[string]$_.Name; display=[string]$_.DisplayName; group=[string]$_.DisplayGroup }
+    }
+  [pscustomobject]@{ ok=$true; rules=$out } | ConvertTo-Json -Compress -Depth 4
+} catch { [pscustomobject]@{ ok=$false; error=$_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    def collect_firewall_rules(self) -> tuple[int, str]:
+        """A new INBOUND ALLOW rule opens a hole for connections to reach in --
+        how a backdoor makes itself reachable, or an attacker opens a port.
+        Snapshot the enabled inbound-allow rules; alert on new ones."""
+        ok, res, err = _ps_marked(self._FIREWALL_PS, timeout=90)
+        if not ok:
+            return 0, f"firewall rules: {err}"
+        if not res.get("ok"):
+            return 0, f"firewall rules: {res.get('error')}"
+        rules = res.get("rules") or []
+        if isinstance(rules, dict):
+            rules = [rules]
+        now = time.time()
+        current = {r.get("name"): r for r in rules if r.get("name")}
+        prev_raw = self._meta("host_firewall_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for name, r in current.items():
+                if name in prev:
+                    continue
+                if self._emit(
+                        kind="firewall_rule_added", ts=now,
+                        summary="firewall inbound allow rule added: " + (r.get("display") or name)[:100],
+                        detail={"name": name, "display": r.get("display"), "group": r.get("group")},
+                        severity="medium", dedup_key="fwrule:" + name, mitre_id="T1562.004"):
+                    n += 1
+        self._set_meta("host_firewall_baseline", json.dumps(sorted(current)))
+        self.db.record_host_fact(
+            fact_key="integrity.firewall_rules", category="integrity",
+            title="Inbound firewall allow rules",
+            state="ok", value=f"{len(current)} inbound allow rules",
+            expected="stable; a new inbound hole is deliberate", reason=None)
+        return n, ""

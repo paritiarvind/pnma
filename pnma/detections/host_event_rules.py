@@ -602,6 +602,40 @@ class PowerShellDowngradeDetection(_HostEventRule):
         )
 
 
+class FirewallRuleAddedDetection(_HostEventRule):
+    rule_id = "firewall_rule_added"
+    name = "New inbound firewall allow rule"
+    severity = "medium"
+    kind = "firewall_rule_added"
+    mitre_id = "T1562.004"
+    mitre_name = "Impair Defenses: Disable or Modify System Firewall"
+    requires = "Get-NetFirewallRule (enabled, inbound, Allow), unelevated; diffed against the host's own baseline"
+    blind_spots = (
+        "Snapshot-diff of enabled inbound ALLOW rules, so it sees a new hole on the next pass, not "
+        "the instant it opens; a rule added and removed between passes is missed. It reports that a "
+        "rule was added, not what program requested it. Installers legitimately add rules, so the "
+        "displayed name/group is what tells an app you installed from a hole you did not open."
+    )
+
+    def describe(self, row, d):
+        return (
+            "A new inbound firewall allow rule was added",
+            f"{row['summary']}\n\n"
+            f"  Rule    {d.get('display') or d.get('name') or '-'}\n"
+            f"  Group   {d.get('group') or '-'}\n\n"
+            "WHY THIS MATTERS: an inbound allow rule is an opening in the wall -- it lets outside "
+            "connections reach a program on this machine. Malware that wants to be reachable (a "
+            "backdoor, a remote-access tool) opens one for itself.\n\n"
+            "BENIGN EXPLANATION: you just installed software that accepts connections (a game, a "
+            "media server, a dev tool, remote desktop) and allowed it through the firewall.\n\n"
+            "MALICIOUS EXPLANATION: nothing you installed explains it, or the rule allows a broad "
+            "range of ports or a program in a user-writable path.\n\n"
+            "NEXT STEP: `Get-NetFirewallRule -DisplayName '<name>' | Get-NetFirewallApplicationFilter` "
+            "shows which program it opens. If you cannot place it, disable the rule (wf.msc) and "
+            "investigate that program."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -617,4 +651,5 @@ def host_event_rules() -> list[Detection]:
         HostsFileTamperDetection(),
         NewListeningProcessDetection(),
         PowerShellDowngradeDetection(),
+        FirewallRuleAddedDetection(),
     ]

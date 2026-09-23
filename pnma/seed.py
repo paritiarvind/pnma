@@ -328,6 +328,8 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
          {"engine_version": "2.0", "record": 400123,
           "excerpt": "Engine state is changed from None to Available. NewEngineState=Available EngineVersion=2.0 RunspaceId=..."},
          "high", "T1059.001"),
+        ("firewall_rule_added", t + 240, "firewall inbound allow rule added: Allow TCP 4444 (any program)",
+         {"name": "{7f3a-rev-shell}", "display": "Allow TCP 4444 (any program)", "group": None}, "medium", "T1562.004"),
         # And one attributed row, so the demo shows the agent's own script is
         # visible but not alerted on.
         ("powershell_block", t + 60, "PNMA's own script",
