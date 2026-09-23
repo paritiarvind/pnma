@@ -11,7 +11,7 @@ def _db():
     return Database(Path(tempfile.mkdtemp()) / "t.db")
 
 
-def _endpoint(db, process, raddr, rport, samples, path="C:/Users/Public/x.exe"):
+def _endpoint(db, process, raddr, rport, samples, path="C:/Program Files/App/x.exe"):
     db.execute("INSERT INTO connection_endpoints(process, path, raddr, rport, first_seen, last_seen, sample_count, samples) "
                "VALUES(?,?,?,?,?,?,?,?)", (process, path, raddr, rport, samples[0], samples[-1], len(samples), json.dumps(samples)))
 
@@ -45,3 +45,27 @@ def test_new_destination_excludes_browsers_and_private():
     f = NewExternalDestinationDetection().evaluate(DetectionContext(db=db, now=now))
     assert len(f) == 1 and f[0].evidence["process"] == "svc_probe.exe"
     assert all(r.requires for r in network_rules())
+
+
+def test_beaconing_allowlists_known_good_but_not_spoofed_names():
+    db = _db(); now = time.time()
+    regular = [now - 3*3600 + i*600 for i in range(18)]        # perfect 10-min cadence
+    # Known-good periodic processes from trusted paths -> excluded.
+    _endpoint(db, "tailscaled.exe", "192.200.0.110", 443, regular, path="C:/Program Files/Tailscale/tailscaled.exe")
+    _endpoint(db, "claude.exe", "160.79.104.10", 443, regular, path="C:/Users/me/AppData/Local/Programs/claude/claude.exe")
+    _endpoint(db, "apsdaemon.exe", "17.57.145.37", 5223, regular, path="C:/Program Files/Common Files/Apple/apsdaemon.exe")
+    # Same trusted name, throwaway path -> the spoof this rule exists to catch.
+    _endpoint(db, "tailscaled.exe", "185.220.101.9", 443, regular, path="C:/Users/me/Downloads/tailscaled.exe")
+    # An unknown process on a beacon cadence -> still flagged.
+    _endpoint(db, "svc_helper.exe", "45.13.7.22", 8443, regular, path="C:/Users/Public/svc_helper.exe")
+    f = BeaconingDetection().evaluate(DetectionContext(db=db, now=now))
+    procs = sorted((x.evidence["process"], x.evidence["raddr"]) for x in f)
+    assert procs == [("svc_helper.exe", "45.13.7.22"), ("tailscaled.exe", "185.220.101.9")]
+
+
+def test_new_destination_allowlist_matches_exact_basename_only():
+    db = _db(); now = time.time()
+    # 'maps.exe' must NOT be swallowed by the 'aps' Apple-push entry.
+    _endpoint(db, "maps.exe", "45.60.71.82", 443, [now - 120], path="C:/Users/Public/maps.exe")
+    f = NewExternalDestinationDetection().evaluate(DetectionContext(db=db, now=now))
+    assert len(f) == 1 and f[0].evidence["process"] == "maps.exe"

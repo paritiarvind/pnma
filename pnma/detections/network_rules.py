@@ -18,10 +18,52 @@ import statistics
 
 from .base import Detection, DetectionContext, Finding
 
-_BROWSER = re.compile(
-    r"chrome|msedge|firefox|brave|opera|vivaldi|iexplore|safari|"
-    r"(^|\\)(svchost|backgroundtaskhost|searchapp|widgetservice|msteams|"
-    r"onedrive|dropbox|spotify|steam|discord|slack|zoom|update)", re.I)
+# Processes that legitimately hold a steady, periodic outbound connection:
+# browsers, cloud sync, OS/vendor push, messaging, VPN/mesh clients, updaters,
+# security agents, and the AI coding assistant this project is built with. A
+# metronome beat from one of these is the norm, not a controller check-in.
+# Matched on the exact executable basename (not a substring), so "maps.exe"
+# never matches "aps".
+_KNOWN_PERIODIC_NAMES = {
+    # browsers
+    "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "iexplore", "safari",
+    # Windows components
+    "svchost", "backgroundtaskhost", "searchapp", "widgetservice", "searchindexer",
+    # cloud sync
+    "onedrive", "dropbox", "googledrivefs", "googledrive", "box",
+    # messaging / media
+    "msteams", "teams", "slack", "discord", "zoom", "spotify", "steam", "steamwebhelper",
+    # VPN / mesh
+    "tailscale", "tailscaled", "wireguard", "expressvpn", "expressvpn-service",
+    "nordvpn", "openvpn", "openvpn-gui",
+    # Apple push / sync
+    "apsdaemon", "itunes", "icloudservices", "icloud",
+    # AI / dev assistants
+    "claude", "code", "cursor",
+    # updaters
+    "update", "updater", "edgeupdate", "msedgeupdate", "googleupdate", "googleupdatecore",
+    # security agents
+    "msmpeng", "mssense", "nissrv", "securityhealthservice", "smartscreen",
+}
+
+# A trusted name running from a throwaway location is exactly the spoof this
+# rule exists to catch, so it is NOT allowlisted.
+_SUSPICIOUS_PATH = re.compile(
+    r"[\\/](temp|tmp|downloads|public)[\\/]|[\\/]appdata[\\/]local[\\/]temp[\\/]", re.I)
+
+
+def _exe_name(process: str | None, path: str | None) -> str:
+    base = (process or "") or (path or "")
+    base = base.replace("/", "\\").split("\\")[-1].strip().lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def _is_known_good(process: str | None, path: str | None) -> bool:
+    if _exe_name(process, path) not in _KNOWN_PERIODIC_NAMES:
+        return False
+    if path and _SUSPICIOUS_PATH.search(path):
+        return False   # trusted name, untrusted path -> still worth a look
+    return True
 
 
 def _samples(row) -> list[float]:
@@ -59,9 +101,13 @@ class BeaconingDetection(Detection):
         "that only briefly opens a socket between samples, can be missed. It is "
         "the host's own connections only, not other devices'. A legitimate app "
         "that polls a server on a fixed schedule (an updater, a sync client) has "
-        "the same rhythm; browsers and known sync/update processes are excluded, "
-        "and the destination is shown so you can recognise it. Real flow data "
-        "would make this sharper; Hearth does not capture packets."
+        "the same rhythm; browsers, cloud sync, VPN/mesh clients, OS push and "
+        "security agents are excluded by exact process name, so a beacon flagged "
+        "here is one that is NOT one of those. That exclusion is name-based, so "
+        "it is bypassed for a trusted name running from a throwaway path (Temp, "
+        "Downloads) -- the classic spoof -- and the process path is shown so a "
+        "borrowed name still stands out. Real flow data would make this sharper; "
+        "Hearth does not capture packets."
     )
     MIN_SAMPLES = 6
     MIN_SPAN_S = 2 * 3600
@@ -74,7 +120,7 @@ class BeaconingDetection(Detection):
             (self.MIN_SAMPLES, self.MIN_SPAN_S))
         out = []
         for r in rows:
-            if _BROWSER.search(r["process"] or "") or _BROWSER.search(r["path"] or ""):
+            if _is_known_good(r["process"], r["path"]):
                 continue
             if not _is_public(r["raddr"] or ""):
                 continue
@@ -151,7 +197,7 @@ class NewExternalDestinationDetection(Detection):
             "WHERE first_seen >= ?", (ctx.now - self.RECENT_S,))
         out = []
         for r in rows:
-            if _BROWSER.search(r["process"] or "") or _BROWSER.search(r["path"] or ""):
+            if _is_known_good(r["process"], r["path"]):
                 continue
             if not _is_public(r["raddr"] or ""):
                 continue
