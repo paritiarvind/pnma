@@ -1265,108 +1265,195 @@ function routerUI() {
   const gw = gatewayAddress();
   return 'the router\'s admin page (' + (gw ? gw + ', ' : '') + 'TP-Link Archer: web UI or the Tether app)';
 }
-const PLAYBOOKS = {
+/* ---- investigation checklist ------------------------------------------
+ *
+ * The rule's own NEXT STEP says what; this arranges the whole response as
+ * the loop a SOC analyst actually runs -- Confirm, Investigate, Contain,
+ * Remediate, Verify -- as a checklist you tick off, so working an alert has
+ * a shape and a finish line rather than a wall of advice. Steps are per rule
+ * family and reuse the household's real equipment (a TP-Link Archer at the
+ * gateway, the specific devices on this LAN). Every alert also gets the
+ * universal loop: a family that does not name a phase falls back to the
+ * generic step for it, and a family sets a phase to null only where that
+ * phase genuinely does not apply (there is nothing to contain in a mis-set
+ * Defender toggle). Progress is remembered per alert, in this browser only.
+ */
+const LIFECYCLE = [
+  ['confirm', 'Confirm', 'Is it real, and is it yours?'],
+  ['investigate', 'Investigate', 'Gather the evidence before you touch anything.'],
+  ['contain', 'Contain', 'Stop it spreading while you work.'],
+  ['remediate', 'Remediate', 'Fix the cause, not the symptom.'],
+  ['verify', 'Verify', 'Prove it is fixed, then close it.'],
+];
+
+const GENERIC = {
+  confirm: ['Read the device, the evidence and "How sure is this" below. First question: is the thing this fired on actually yours, and on your network? The blind-spots note says what this rule can mistake -- your own monitoring host is the classic false positive.'],
+  investigate: ['Open the Investigation log on the right: it shows what was recorded around this alert, so you can see what led up to it, not just the moment it fired.'],
+  contain: ['If anything here is unfamiliar and reachable, isolate it now -- a device at the router, a process by stopping it. Containment is reversible; a compromise spreading is not.'],
+  remediate: ['Fix the cause named in the evidence -- a setting, a service, a device or an account -- not just the symptom.'],
+  verify: ['Wait for the next detection pass, or re-run the collector. The alert should stop recurring. Then Acknowledge it (you are on it) or Resolve it (done, or judged benign).'],
+};
+
+const CHECKLIST = {
   isolate_device: {
-    title: 'Isolate this device',
-    steps: [
-      () => 'Identify it physically first: match the MAC and vendor above against the router\'s client list (' + routerUI() + ' → Network Map → Clients). On this network: "Apple" is a Mac or iPhone, "Microsoft" the Xbox, "HP" the printer, "TP-Link" the router itself, "Hui Zhou Gaoshengda" is the Wi-Fi module inside the smart TV. A randomised MAC with no vendor is a phone or laptop with private addressing on. The smart bulb and the robot vacuum will show up under a module maker you may not recognise (Tuya, Espressif, Broadlink, Roborock/Ecovacs) -- if a vendor here is one you cannot place, that is the device to pick up first.',
-      'Cut it off at the router: Advanced → Security → Access Control → turn Access Control on, mode Blacklist, add the device by MAC. This survives the device rebooting or changing IP.',
-      'If it is wired (the Xbox, the printer), unplug the Ethernet cable; the TV, bulb and vacuum come off at the power switch or the plug. Physical isolation beats every setting.',
-      'Verify: within 15 minutes its node on the Network tab should go dashed (not seen) and "online" in the Telemetry above should read "no". `ping <its ip>` from this machine should time out.',
-      'Then investigate, not before: open the device\'s own app (the TV\'s settings, the vacuum\'s or bulb\'s phone app), look for the service named in the alert, install any firmware update, and factory-reset it if you cannot explain the listener.',
-      'Re-admit only once a fresh scan no longer shows the port, then mark this alert Resolved. Move the TV, bulb and vacuum onto the router\'s IoT network from then on (Advanced → Wireless → IoT Network on this firmware; Guest Network with "allow guests to see each other" off is the fallback) so they can reach the internet but not your laptops.',
-    ],
+    confirm: [() => "Identify it physically first: match the MAC and vendor above against the router's client list (" + routerUI() + " -> Network Map -> Clients). \"Apple\" is a Mac or iPhone, \"Microsoft\" the Xbox, \"HP\" the printer, \"Hui Zhou Gaoshengda\" the smart TV's Wi-Fi module. A randomised MAC with no vendor is a phone or laptop with private addressing; a module maker you cannot place (Tuya, Espressif, Roborock) is the device to pick up first."],
+    investigate: ["Read the Telemetry and Investigation log: which port, first seen when, behaving unlike its kind how. A device suddenly serving a port it never did, or scanning its neighbours, is the shape that matters."],
+    contain: ["Cut it off at the router: Advanced -> Security -> Access Control -> on, mode Blacklist, add by MAC. This survives the device rebooting or changing IP.", "If it is wired (the Xbox, the printer) unplug the cable; the TV, bulb and vacuum come off at the plug. Physical isolation beats every setting."],
+    remediate: ["Investigate only once it is isolated: open the device's own app, find the service named in the alert, install any firmware update, and factory-reset it if you cannot explain the listener."],
+    verify: ["Within 15 minutes its node on the Network tab should go dashed and Telemetry \"online\" should read no; `ping <its ip>` should time out.", "Re-admit only once a fresh scan no longer shows the port, then Resolve. Move the TV, bulb and vacuum onto the router's IoT network from then on."],
   },
   arp_spoof: {
-    title: 'Check the gateway binding',
-    steps: [
-      'On this machine run `arp -a` and read the MAC next to the gateway IP. It must be the router\'s own MAC (the one PNMA pinned in config/pnma.toml as gateway_mac). Anything else means something is answering for the router.',
-      () => 'Look up the second MAC in the router\'s client list (' + routerUI() + ' → Network Map → Clients). A laptop with both Wi-Fi and Ethernet, or a mesh satellite, is the benign case.',
-      'If you cannot name it: change the Wi-Fi password (Wireless → WPA2/WPA3-Personal, AES), reboot the router, and re-check `arp -a` after two minutes.',
-      () => 'Stop-gap on this PC while you investigate, from an Administrator prompt: `netsh interface ipv4 add neighbors "Wi-Fi" ' + (gatewayAddress() || 'http://<gateway-ip>').replace('http://', '') + ' <router-mac>` pins the correct binding so traffic cannot be redirected. Undo later with `delete neighbors`.',
-      'Verify: the alert stops recurring on later runs (the "seen on N runs" badge stops climbing) and `arp -a` shows one stable MAC.',
-    ],
+    confirm: ["Run `arp -a` on this machine and read the MAC next to the gateway IP. It must be the router's own MAC (the one pinned in config/pnma.toml). Anything else means something is answering for the router.", () => "A benign case exists: look the second MAC up in the router's client list (" + routerUI() + " -> Network Map -> Clients). A laptop with both Wi-Fi and Ethernet, or a mesh satellite, legitimately shows two."],
+    investigate: ["If you cannot name the second MAC, treat it as active interception until proven otherwise -- this is the one alert where containment comes before more digging."],
+    contain: [() => "Stop-gap on this PC, from an Administrator prompt: `netsh interface ipv4 add neighbors \"Wi-Fi\" " + (gatewayAddress() || "<gateway-ip>").replace("http://", "") + " <router-mac>` pins the correct binding so traffic cannot be redirected. Undo later with `delete neighbors`."],
+    remediate: ["Change the Wi-Fi password (WPA2/WPA3-Personal, AES), reboot the router, and re-check `arp -a` after two minutes."],
+    verify: ["The alert stops recurring (the \"seen on N runs\" badge stops climbing) and `arp -a` shows one stable MAC for the gateway."],
   },
   new_device: {
-    title: 'Decide whether this device is yours',
-    steps: [
-      () => 'Read vendor, hostname and first-seen time above. Then check what joined the Wi-Fi at that moment: ' + routerUI() + ' → Network Map → Clients shows the SSID and band it is on. This household expects: Mac and Windows laptops, two iPhones, one Android, an Xbox, an HP printer, a smart TV, a smart bulb and a robot vacuum. Anything that is not one of those needs a name or a block.',
-      'Yours: open it on the Network tab and mark it trusted with a name. That is the whole fix; the alert clears on the next run.',
-      'Not yours: block it (Advanced → Security → Access Control → Blacklist by MAC) and change the Wi-Fi password, because it had that password.',
-      'If it keeps returning under new randomised MACs, the password has leaked further than one device: rotate it and re-join only what you can name.',
-    ],
-  },
-  host: {
-    title: 'Fix the setting on this machine',
-    steps: [
-      'Open the Host tab: the card for this control shows what was measured, what was expected, and why it matters, with the exact setting name.',
-      'Defender controls live in Windows Security → Virus & threat protection → Manage settings (Tamper Protection, real-time, PUA under "Reputation-based protection" in App & browser control).',
-      'Audit and PowerShell logging are Group Policy or registry settings; the card names the key. Change it from an Administrator prompt or gpedit.msc.',
-      'Verify by re-running the collector; the card turns green and this alert resolves itself on the next detection pass.',
-    ],
-  },
-  unmeasured: {
-    title: 'Get a real answer',
-    steps: [
-      '"Could not be measured" is not "fine". The check needed Administrator and did not have it.',
-      'From an elevated terminal run `pnma collect` once; the Host tab updates within a minute and this alert resolves if the controls pass.',
-      'If it stays unknown after an elevated run, the reason on the card is a collector failure, not a permission problem -- that reason is the thing to chase.',
-    ],
-  },
-  identity: {
-    title: 'Review the account, then attest',
-    steps: [
-      'Open the provider\'s security page (Google: myaccount.google.com/security; Microsoft: account.microsoft.com/security; Apple: appleid.apple.com; banks: their app\'s security or devices page).',
-      'Check the control named in this alert -- MFA method, recovery email and phone, signed-in devices and connected apps, new-login alerts. Remove anything you do not recognise.',
-      'Go to the Identity tab and tap the state you actually found: ok, finding, or unknown. Attest what you verified, not what you hope.',
-      'A finding on a mailbox is urgent: every password reset for every other account flows through it.',
-    ],
-  },
-  availability: {
-    title: 'Find out why it dropped',
-    steps: [
-      'Check the obvious: power, Wi-Fi range, a device that was simply taken out of the house.',
-      'If it is a security camera, NAS, or anything that should always be up, look at its own status light and reboot it once.',
-      'Repeated drops on one device with everything else steady point at the device; drops across many devices at once point at the router or the Wi-Fi channel.',
-    ],
-  },
-  honeypot: {
-    title: 'Triage a honeypot hit',
-    steps: [
-      'This is traffic against your decoy, not your real network -- so first confirm the honeypot is still isolated: it must sit on a segment with no route to your laptops, phones or the router’s main LAN.',
-      'Read the source IP and the credentials it tried (in the evidence above). If any password it guessed is one you actually use anywhere, rotate that password now -- treat it as known to attackers.',
-      'If the source IP is one of YOUR devices, that is the real finding: something on your network is attacking the decoy, which means it is likely compromised. Isolate that device (see the network playbooks).',
-      'Otherwise this is intelligence, not an incident: note the commands the attacker ran to learn current tactics, then leave the honeypot to keep collecting. Nothing on your real network needs action.',
-      'Mark the alert Resolved once you have checked isolation and rotated any matching password.',
-    ],
+    confirm: [() => "Read vendor, hostname and first-seen time above, then check what joined the Wi-Fi at that moment: " + routerUI() + " -> Network Map -> Clients. This household expects Mac and Windows laptops, two iPhones, one Android, an Xbox, an HP printer, a smart TV, a smart bulb and a robot vacuum. Anything else needs a name or a block."],
+    contain: ["Not sure it is yours? Block it first (Advanced -> Security -> Access Control -> Blacklist by MAC); you can always re-admit a device you later recognise."],
+    remediate: ["Yours: open it on the Network tab and mark it trusted with a name -- that is the whole fix. Not yours: keep it blocked and change the Wi-Fi password, because it had that password.", "If it keeps returning under new randomised MACs, the password has leaked further than one device: rotate it and re-join only what you can name."],
+    verify: ["A trusted-and-named device clears on the next run; a blocked one stops appearing online."],
   },
   cve: {
-    title: 'Close a known-exploited exposure',
-    steps: [
-      'Read the advisory above: it names the exposure class and links the emblematic CVE. This is matched on the open port/service, not a version-exact test, so first confirm the device really runs that service (the Telemetry section shows its open ports).',
-      () => 'If it is a laptop or the Xbox, fix it on the device: turn the service off (Remote Desktop, file sharing) or patch the OS. If it is the TV, bulb or vacuum, update its firmware from its own app and turn off any remote/debug feature you do not use.',
-      () => 'If you cannot fix it now, contain it: block the device by MAC at ' + routerUI() + ' (Advanced -> Security -> Access Control), or move it onto the IoT network so a compromise cannot reach your laptops.',
-      'Never leave the port forwarded to the internet -- check Advanced -> NAT Forwarding -> Port Forwarding / DMZ on the router and remove any entry for this device.',
-      'To actually learn the attack, do it in a sandbox against a target built to be attacked, never against this device. The FOR LEARNING note above and docs/PENTEST_LAB.md say how.',
-      'Verify: re-run a scan (or wait for the next collector pass); when the port no longer answers, the advisory clears. Then mark the alert Resolved.',
-    ],
+    confirm: ["Read the advisory above: it names the exposure class and the emblematic CVE. This matches on the open port/service, not a version-exact test, so confirm the device really runs that service -- the Telemetry shows its open ports."],
+    investigate: ["Decide what the device is and whether it can be patched: a laptop or the Xbox can be; a cheap TV, bulb or vacuum may only offer a firmware update from its own app."],
+    contain: [() => "If you cannot fix it now, contain it: block the device by MAC at " + routerUI() + " (Advanced -> Security -> Access Control), or move it onto the IoT network so a compromise cannot reach your laptops.", "Never leave the port forwarded to the internet -- check Advanced -> NAT Forwarding -> Port Forwarding / DMZ and remove any entry for this device."],
+    remediate: ["Turn the service off (Remote Desktop, file sharing) or patch the OS; for IoT, update the firmware and disable any remote/debug feature you do not use.", "To actually learn the attack, do it in a sandbox against a target built to be attacked, never against this device (docs/PENTEST_LAB.md)."],
+    verify: ["Re-run a scan or wait for the next pass; when the port no longer answers, the advisory clears. Then Resolve."],
+  },
+  host: {
+    confirm: ["Open the Host tab: the card for this control shows what was measured, what was expected, and the exact setting name. Confirm it is genuinely off, not merely unmeasured."],
+    contain: null,
+    remediate: ["Defender controls: Windows Security -> Virus & threat protection -> Manage settings (Tamper Protection, real-time; PUA under App & browser control).", "Audit and PowerShell logging are Group Policy or registry settings -- the card names the key. Change it from an Administrator prompt or gpedit.msc."],
+    verify: ["Re-run the collector; the card turns green and this alert resolves itself on the next pass."],
+  },
+  unmeasured: {
+    confirm: ["\"Could not be measured\" is not \"fine\": the check needed Administrator and did not have it. Confirm which control it was on the Host tab."],
+    contain: null,
+    remediate: ["From an elevated terminal run `pnma collect` once; the Host tab updates within a minute and this alert resolves if the controls pass."],
+    verify: ["If it stays unknown after an elevated run, the reason on the card is a collector failure, not a permission problem -- that reason is the thing to chase."],
+  },
+  identity: {
+    confirm: ["Open the provider's security page (Google: myaccount.google.com/security; Microsoft: account.microsoft.com/security; Apple: appleid.apple.com; a bank: its app's security page). Confirm the control named in this alert."],
+    investigate: ["Check the MFA method, recovery email and phone, signed-in devices and connected apps, and new-login alerts. Remove anything you do not recognise. A finding on a mailbox is urgent -- every other account's reset flows through it."],
+    contain: null,
+    remediate: ["Fix what you found on the provider's page: add MFA, remove a stale recovery address, sign out an unknown device."],
+    verify: ["Go to the Identity tab and tap the state you actually found -- ok, finding or unknown. Attest what you verified, not what you hope."],
+  },
+  availability: {
+    confirm: ["Check the obvious first: power, Wi-Fi range, or a device simply taken out of the house. Not every drop is an incident."],
+    investigate: ["Repeated drops on one device with everything else steady point at the device; drops across many devices at once point at the router or the Wi-Fi channel."],
+    contain: null,
+    remediate: ["For something that should always be up (a camera, a NAS), look at its own status light and reboot it once."],
+    verify: ["Availability on the Network tab climbs back and holds across the next few passes."],
+  },
+  honeypot: {
+    confirm: ["This is traffic against your decoy, not your real network. Confirm the honeypot is still isolated: it must sit on a segment with no route to your laptops, phones or the main LAN."],
+    investigate: ["Read the source IP and the credentials it tried (evidence above). If the source IP is one of YOUR devices, that is the real finding -- something on your network is attacking the decoy, so treat that device as compromised and isolate it."],
+    contain: ["If any password it guessed is one you actually use anywhere, rotate that password now -- treat it as known to attackers."],
+    remediate: ["Otherwise this is intelligence, not an incident: note the commands the attacker ran, then leave the honeypot to keep collecting."],
+    verify: ["Resolve once you have checked isolation and rotated any matching password."],
+  },
+  host_process: {
+    confirm: ["Was this you or your tools? PowerShell fired by something you were running -- an installer, a dev tool, this agent itself -- is the common benign case. The evidence shows the command line and the parent process; read it before acting.", "A single encoded or one-line command from a program you can name is usually fine. A chain of them, from an Office app, a browser, or a script in a user-writable folder, is not."],
+    investigate: ["Find the process: `Get-CimInstance Win32_Process | Where-Object ProcessId -eq <pid> | Format-List Name,CommandLine,ParentProcessId` (the pid is in the evidence). Trace the parent upward until you reach something you started.", "Decode it to read intent without running it: an encoded command is Base64 UTF-16 -- `[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(\"<blob>\"))` in a non-elevated window prints the real script."],
+    contain: ["If the parent is not something you can explain, do not just close the window -- `Stop-Process -Id <pid>` and disconnect this machine from the network so it cannot fetch a second stage."],
+    remediate: ["Full scan: `Start-MpScan -ScanType FullScan`. Remove the script or scheduled task that launched it (Host tab -> Autoruns). Change any password you typed while it was running."],
+    verify: ["Re-run the collector; no new match for this command means it is gone. If it returns, capture it with `pnma quarantine <path>` and treat the host as compromised."],
+  },
+  host_network: {
+    confirm: ["Do you recognise the process and the address? The evidence names both. Browsers, updaters and sync clients talking to their own servers are excluded, so a process flagged here is one that should not normally phone out."],
+    investigate: ["Look the destination up BY HAND from your browser -- the agent will not reach out for you. A reputation service (VirusTotal, AbuseIPDB) tells you if it is known-bad. Note the port: 443 hides in normal traffic, an odd high port does not.", "Tie the address to a process: `Get-NetTCPConnection -RemoteAddress <ip> | Select-Object LocalPort,OwningProcess` then `Get-Process -Id <pid>`. A binary in a user-writable path (Downloads, AppData, Public) is the tell."],
+    contain: ["Block the destination at the router (Advanced -> Security), or pull this machine off the network if the process is one you cannot name. For an upload spike that also stops data leaving now."],
+    remediate: ["Remove the program that owns the connection and anything that auto-starts it (Host tab -> Autoruns), full-scan, and rotate credentials for anything that program could read."],
+    verify: ["Watch the connection endpoints on later passes: the beacon should stop and no new first-time destination appears for that process. Then Resolve."],
+  },
+  host_persistence: {
+    confirm: ["Did you just install or update something? A new autorun, service or hidden folder right after you installed an app is that app. The evidence shows what changed and when -- match it to what you were doing."],
+    investigate: ["Inspect the entry without running it: an autorun or service shows its command and path on the Host tab -> Autoruns card; for a hidden folder, `Get-ChildItem -Force <path>` lists what is inside. A signed binary from a known vendor is benign; an unsigned exe or a script in AppData, Public or ProgramData is not."],
+    contain: ["If it is unexplained, disable it before it runs again -- an autorun via Task Manager -> Startup or `schtasks /Change /TN \"<name>\" /DISABLE`, a service via `Stop-Service` then `Set-Service -StartupType Disabled`. Do not delete it yet; you want it for evidence."],
+    remediate: ["Capture it (`pnma quarantine <path>`), then remove the entry and its binary and full-scan. Persistence usually means something ran first -- work the process and network alerts from the same time too."],
+    verify: ["Re-run the collector: the autorun and service list matches expected and no new hidden dir appears. Then Resolve."],
   },
 };
-const RULE_PLAYBOOK = {
-  c2_indicator: 'isolate_device', profile_deviation: 'isolate_device', service_drift: 'isolate_device',
+
+const RULE_CHECKLIST = {
+  c2_indicator: 'isolate_device', profile_deviation: 'isolate_device', service_drift: 'host_persistence',
   arp_spoof: 'arp_spoof', new_device: 'new_device', cve_exposure: 'cve', honeypot_hit: 'honeypot',
   host_posture: 'host', control_disabled: 'host', unmeasured_control: 'unmeasured',
   identity_posture: 'identity', identity_unreviewed: 'identity', availability: 'availability',
+  suspicious_powershell: 'host_process', encoded_command: 'host_process', defender_tamper: 'host_process',
+  beaconing: 'host_network', new_external_destination: 'host_network', upload_spike: 'host_network',
+  autorun_changed: 'host_persistence', service_installed: 'host_persistence', hidden_dir_created: 'host_persistence',
 };
-function playbookFor(alert) {
-  const pb = PLAYBOOKS[RULE_PLAYBOOK[alert.rule_id]];
-  if (!pb) return null;
-  return el('div', { class: 'playbook' }, [
-    el('div', { class: 'alertdetail__label', text: 'how, step by step: ' + pb.title }),
-    el('ol', { class: 'alert__steps' }, pb.steps.map((st) => el('li', {}, inlineCode(typeof st === 'function' ? st() : st)))),
-  ]);
+
+function checklistDone(alertId) {
+  try { return new Set(JSON.parse(localStorage.getItem('hearth.ck.' + alertId) || '[]')); }
+  catch (e) { return new Set(); }
 }
+function saveChecklistDone(alertId, set) {
+  try { localStorage.setItem('hearth.ck.' + alertId, JSON.stringify(Array.from(set))); } catch (e) { /* private window */ }
+}
+
+/* The response loop for one alert: five phases, each a few ticked steps,
+ * with a spine that fills as phases complete. */
+function checklistFor(alert) {
+  const spec = CHECKLIST[RULE_CHECKLIST[alert.rule_id]] || {};
+  const done = checklistDone(alert.id);
+  const phases = LIFECYCLE.map(([pk, plabel, phint]) => {
+    const raw = spec[pk] === null ? [] : (spec[pk] || GENERIC[pk] || []);
+    const steps = raw.map((st, i) => ({ id: pk + ':' + i, text: typeof st === 'function' ? st() : st }));
+    return { pk, plabel, phint, steps };
+  }).filter((p) => p.steps.length);
+  const all = phases.reduce((a, p) => a.concat(p.steps), []);
+  const total = all.length;
+
+  const wrap = el('div', { class: 'checklist' });
+  const count = el('span', { class: 'checklist__count' });
+  const fill = el('span', { class: 'checklist__fill' });
+  wrap.appendChild(el('div', { class: 'checklist__progress' }, [
+    count, el('span', { class: 'checklist__track' }, [fill]),
+  ]));
+  function paint() {
+    const n = all.filter((s) => done.has(s.id)).length;
+    count.textContent = n + ' / ' + total + ' done';
+    fill.style.width = (total ? Math.round((n / total) * 100) : 0) + '%';
+    wrap.classList.toggle('is-complete', n === total && total > 0);
+  }
+
+  for (const p of phases) {
+    let phaseEl;
+    const list = el('ol', { class: 'checklist__steps' }, p.steps.map((s) => {
+      const box = el('input', { type: 'checkbox', class: 'checklist__box', id: 'ck-' + alert.id + '-' + s.id });
+      if (done.has(s.id)) box.checked = true;
+      const li = el('li', { class: 'checklist__step' + (done.has(s.id) ? ' is-done' : '') }, [
+        el('label', { class: 'checklist__label', for: box.id }, [box, el('span', { class: 'checklist__text' }, inlineCode(s.text))]),
+      ]);
+      box.addEventListener('change', () => {
+        if (box.checked) done.add(s.id); else done.delete(s.id);
+        saveChecklistDone(alert.id, done);
+        li.classList.toggle('is-done', box.checked);
+        phaseEl.classList.toggle('is-complete', p.steps.every((x) => done.has(x.id)));
+        paint();
+      });
+      return li;
+    }));
+    phaseEl = el('div', { class: 'checklist__phase' + (p.steps.every((x) => done.has(x.id)) ? ' is-complete' : '') }, [
+      el('div', { class: 'checklist__phasehead' }, [
+        el('span', { class: 'checklist__phasename', text: p.plabel }),
+        el('span', { class: 'checklist__phasehint', text: p.phint }),
+      ]),
+      list,
+    ]);
+    wrap.appendChild(phaseEl);
+  }
+  paint();
+  return wrap;
+}
+
 /* `backticks` in a step become <code>, so a command reads as a command. */
+
 function inlineCode(text) {
   return text.split(/(`[^`]+`)/).filter(Boolean).map((part) =>
     part.startsWith('`') ? el('code', { text: part.slice(1, -1) }) : part);
@@ -1419,9 +1506,8 @@ function alertDetail(alert, onAction) {
   if (parsed.groups.malicious.length) bm.push(section('Could be an attack if…', paras(parsed.groups.malicious), 'alertdetail__sec--malicious'));
   if (bm.length) card.appendChild(el('div', { class: 'alertdetail__pair' }, bm));
   const todo = parsed.groups.steps.map((it) => stepsList(it.body));
-  const pb = playbookFor(alert);
-  if (pb) todo.push(pb);
   if (todo.length) card.appendChild(section('What to do', todo, 'alertdetail__sec--steps'));
+  card.appendChild(section('Work this alert', [checklistFor(alert)], 'alertdetail__sec--checklist'));
 
   // How sure is this: corroboration, classification signals, coverage
   // caveats, the technique, then the raw evidence for the reader who wants
