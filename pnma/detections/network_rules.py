@@ -44,6 +44,9 @@ _KNOWN_PERIODIC_NAMES = {
     "update", "updater", "edgeupdate", "msedgeupdate", "googleupdate", "googleupdatecore",
     # security agents
     "msmpeng", "mssense", "nissrv", "securityhealthservice", "smartscreen",
+    # Microsoft OneDrive / Office / Windows telemetry components
+    "filesynchelper", "officeclicktorun", "softlandingtask", "backgrounddownload",
+    "filecoauth", "microsoft.sharepoint", "msoia", "officec2rclient",
 }
 
 # Trusted vendor families whose components multiply into many executable names
