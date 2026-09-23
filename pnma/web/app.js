@@ -2371,6 +2371,9 @@ function openAlertById(id) {
 window.PNMA.openAlert = openAlertById;
 window.PNMA.renderDevices = renderDevices;
 window.PNMA.renderAvailability = renderAvailability;
+// Pure alert render helpers, exposed for unit tests.
+window.PNMA.__alerts = { alertRow, rollupRows, checklistFor, parseDescription, foldedRules, normaliseAlerts,
+                         CHECKLIST, RULE_CHECKLIST, GENERIC, LIFECYCLE };
 
 document.addEventListener('DOMContentLoaded', () => {
   buildNotifyPill();

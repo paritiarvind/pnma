@@ -526,7 +526,7 @@
       el('h3', { class: 'coverage__title', text: 'Coverage' }),
       el('div', { class: 'coverage__score' }, [
         el('span', { class: 'coverage__pct', text: score === null ? '\u2014' : score + '%' }),
-        el('span', { class: 'coverage__lbl', text: 'measured and passing' }),
+        el('span', { class: 'coverage__lbl', text: score === null ? 'nothing measured yet' : 'measured and passing' }),
         back ? el('span', { class: 'coverage__back', text: back + ' ' + plural(back, 'point') + ' to win back' }) : null,
       ]),
     ]);
@@ -1541,6 +1541,10 @@
   });
 
   PNMA.openDeviceSheet = openSheet;
+  // Pure render helpers, exposed for unit tests (same intent as app.js's
+  // renderAlerts/renderHostPosture exports): a component can be built from a
+  // fixture and inspected without standing up the API or the whole page.
+  PNMA.__viz = { ring, coverageHead, tile, severityBar, networkCounts, postureBanner };
   document.addEventListener('DOMContentLoaded', () => {
     buildTabs();
     buildTools();
