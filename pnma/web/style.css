@@ -1205,6 +1205,7 @@ input:focus-visible,
 .tool--stream { cursor: help; }
 .tool--streaming { color: var(--nav-agent); border-color: color-mix(in srgb, var(--nav-agent) 45%, transparent); }
 .tool--polling { color: var(--fg-dim); }
+.tool--static { color: var(--fg-muted); border-style: dashed; cursor: default; }
 
 .tabs {
   max-width: 1100px; margin: 0 auto; padding: 0 var(--s3);

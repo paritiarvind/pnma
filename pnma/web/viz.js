@@ -460,6 +460,7 @@
    * did not move. The timers stay as the fallback when the stream is down.
    * Hidden tabs pause the stream and resume on return, so a phone in a
    * pocket costs nothing. */
+  const SNAPSHOT = /[?&](static|snapshot)(=|&|$)/.test(location.search);
   const live = { streaming: false, cursor: null, lastChange: 0, lastAck: 0, backoff: 1000, refreshers: [], paused: false };
   PNMA.live = live;
   PNMA.onChange = (fn) => { live.refreshers.push(fn); };
@@ -475,6 +476,7 @@
   function paintStream() {
     const pill = document.getElementById('stream-pill');
     if (!pill) return;
+    if (SNAPSHOT) { pill.textContent = '■ static'; pill.className = 'tool tool--stream tool--static'; return; }
     if (live.paused) { pill.textContent = '⇅ paused'; pill.className = 'tool tool--stream'; return; }
     if (live.streaming) {
       const ago = live.lastChange ? relativeTime(live.lastChange / 1000) : null;
@@ -1516,6 +1518,10 @@
       for (const x of s.sensors || []) PNMA.learnName(x.hostname);
     }).catch(() => { /* the gate or a dead API; the panels report that themselves */ });
     loadOverview(); loadMap(); loadDeviceActivity(); loadActivity(); loadAttack(); loadIdentity(); loadAgent(); loadLogs();
+    // Static mode (?static / ?snapshot): render once, then hold. No long-poll,
+    // no timers -- the page reaches network-idle, so it screenshots and embeds
+    // cleanly and costs a low-power viewer nothing. Live mode is the default.
+    if (SNAPSHOT) { paintStream(); return; }
     every(loadOverview, 60000);
     every(loadMap, 60000);
     every(loadDeviceActivity, 60000);
