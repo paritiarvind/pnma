@@ -8,6 +8,7 @@ the agent-generated flag are applied in exactly one place.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -62,6 +63,15 @@ def observe(
     )
     device_id = identity.device_id
     vendor = oui.lookup(identity.mac)
+
+    # A randomised-MAC device is first seen under an ephemeral id (from its
+    # MAC) and resolves to a durable DHCP-fingerprint id once its hostname or
+    # option list appears. Fold the ephemeral row -- and all its history --
+    # into the durable one, so the device does not show up twice. Deterministic
+    # because the ephemeral id is exactly what this MAC produced before.
+    if identity.strategy == "dhcp":
+        ephemeral_id = "e:" + hashlib.sha256(identity.mac.encode()).hexdigest()[:16]
+        db.merge_device(ephemeral_id, device_id)
 
     existing = db.query_one(
         "SELECT device_id, first_seen, hostname, dhcp_fingerprint, "

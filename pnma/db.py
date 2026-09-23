@@ -549,6 +549,42 @@ class Database:
             (mac, ip, now, now, 1 if passive else 0),
         )
 
+    # Tables that carry a device_id and must follow a device when its identity
+    # is merged. Kept here so a new device-scoped table is a one-line add.
+    _DEVICE_CHILD_TABLES = ("observations", "ports", "availability", "alerts", "exposure_banners")
+
+    def merge_device(self, old_id: str, new_id: str) -> bool:
+        """Fold one device identity into another, moving all of its history.
+
+        A randomised-MAC device is first seen under an ephemeral id derived
+        from its MAC ('e:'), then resolves to a durable id derived from its
+        DHCP fingerprint/hostname ('f:') once those appear. `fingerprint`
+        promises the two "may merge"; this is that merge. Every child row
+        (observations, ports, availability, alerts, banners) is reassigned,
+        and the surviving row keeps the earliest first_seen and any trust or
+        label the operator had already set. Returns True if a merge happened.
+        """
+        if old_id == new_id:
+            return False
+        old = self.query_one("SELECT * FROM devices WHERE device_id = ?", (old_id,))
+        if old is None:
+            return False
+        for table in self._DEVICE_CHILD_TABLES:
+            self.execute(f"UPDATE {table} SET device_id = ? WHERE device_id = ?", (new_id, old_id))
+        new = self.query_one("SELECT device_id FROM devices WHERE device_id = ?", (new_id,))
+        if new is None:
+            # The durable identity has no row of its own yet: rename in place,
+            # so first_seen, trust, label, classification all carry over intact.
+            self.execute("UPDATE devices SET device_id = ? WHERE device_id = ?", (new_id, old_id))
+        else:
+            self.execute(
+                "UPDATE devices SET first_seen = MIN(first_seen, ?), "
+                "trusted = MAX(trusted, ?), label = COALESCE(label, ?) WHERE device_id = ?",
+                (old["first_seen"], old["trusted"], old["label"], new_id),
+            )
+            self.execute("DELETE FROM devices WHERE device_id = ?", (old_id,))
+        return True
+
     def raise_alert(
         self,
         *,
