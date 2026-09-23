@@ -57,7 +57,8 @@ log = logging.getLogger(__name__)
 EVENT_KINDS = (
     "software_installed", "software_removed", "autorun_added", "autorun_removed",
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
-    "connection",
+    "connection", "root_cert_added", "hosts_file_changed", "listening_process",
+    "powershell_downgrade",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -370,6 +371,10 @@ class HostEventCollector:
             ("hidden_dirs", self.collect_hidden_dirs),
             ("connections", self.collect_connections),
             ("counters", self.collect_counters),
+            ("root_certs", self.collect_root_certs),
+            ("hosts_file", self.collect_hosts_file),
+            ("listeners", self.collect_listeners),
+            ("ps_downgrade", self.collect_ps_downgrade),
         ):
             try:
                 n, unknown = fn()
@@ -930,3 +935,195 @@ $out = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | F
                             (now, r.get("name"), float(r.get("sent") or 0), float(r.get("recv") or 0)))
         self.db.execute("DELETE FROM host_counters WHERE ts < ?", (now - 7 * 86400,))
         return 0, ""
+
+
+    # -- trusted root certificate store (SEC555 Book 3: Certificate Store) ----
+
+    _ROOTCERT_PS = r"""
+param()
+$out = @()
+foreach ($s in @('Cert:\LocalMachine\Root','Cert:\CurrentUser\Root')) {
+  try {
+    Get-ChildItem $s -ErrorAction Stop | ForEach-Object {
+      $out += [pscustomobject]@{ thumb=[string]$_.Thumbprint; subject=[string]$_.Subject; issuer=[string]$_.Issuer; store=$s }
+    }
+  } catch {}
+}
+[pscustomobject]@{ ok=$true; certs=$out } | ConvertTo-Json -Compress -Depth 4
+"""
+
+    def collect_root_certs(self) -> tuple[int, str]:
+        """A new trusted root CA is how interception (MitM) implants trust.
+        Snapshot the machine + user Root stores; alert on any new thumbprint."""
+        ok, res, err = _ps_marked(self._ROOTCERT_PS, timeout=60)
+        if not ok:
+            return 0, f"root certificates: {err}"
+        certs = res.get("certs") or []
+        if isinstance(certs, dict):
+            certs = [certs]
+        now = time.time()
+        current = {c.get("thumb"): c for c in certs if c.get("thumb")}
+        prev_raw = self._meta("host_rootcerts_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for thumb, c in current.items():
+                if thumb in prev:
+                    continue
+                if self._emit(
+                        kind="root_cert_added", ts=now,
+                        summary="new trusted root certificate: " + (c.get("subject") or thumb)[:100],
+                        detail={"thumbprint": thumb, "subject": c.get("subject"),
+                                "issuer": c.get("issuer"), "store": c.get("store")},
+                        severity="medium", dedup_key="rootcert:" + thumb, mitre_id="T1553.004"):
+                    n += 1
+        self._set_meta("host_rootcerts_baseline", json.dumps(sorted(current)))
+        self.db.record_host_fact(
+            fact_key="integrity.root_certs", category="integrity",
+            title="Trusted root certificate store",
+            state="ok", value=f"{len(current)} roots trusted",
+            expected="stable; a new trusted root is rare and deliberate",
+            reason=None)
+        return n, ""
+
+    # -- hosts file (SEC555 Book 3: Hosts File takes precedence over DNS) -----
+
+    _HOSTS_PS = r"""
+param()
+$p = "$env:SystemRoot\System32\drivers\etc\hosts"
+try {
+  $lines = @()
+  Get-Content -LiteralPath $p -ErrorAction Stop | ForEach-Object {
+    $t = $_.Trim()
+    if ($t -and -not $t.StartsWith('#')) { $lines += $t }
+  }
+  [pscustomobject]@{ ok=$true; lines=$lines } | ConvertTo-Json -Compress
+} catch { [pscustomobject]@{ ok=$false; error=$_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    # localhost lines are the file's normal content; not a redirect.
+    _HOSTS_BENIGN = re.compile(r"^\s*(127\.0\.0\.1|::1|0\.0\.0\.0)\s+(localhost|::1)?\s*$", re.I)
+
+    def collect_hosts_file(self) -> tuple[int, str]:
+        """The hosts file overrides DNS and should not change on a home host.
+        A new redirect entry is name-resolution tampering (MitM, or blocking
+        security/update domains). Baseline the non-comment lines; alert on new."""
+        ok, res, err = _ps_marked(self._HOSTS_PS, timeout=45)
+        if not ok:
+            return 0, f"hosts file: {err}"
+        if not res.get("ok"):
+            return 0, f"hosts file: {res.get('error')}"
+        lines = res.get("lines") or []
+        if isinstance(lines, str):
+            lines = [lines]
+        entries = sorted(l for l in lines if l and not self._HOSTS_BENIGN.match(l))
+        now = time.time()
+        prev_raw = self._meta("host_hostsfile_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for line in entries:
+                if line in prev:
+                    continue
+                if self._emit(
+                        kind="hosts_file_changed", ts=now,
+                        summary="hosts file redirect added: " + line[:120],
+                        detail={"entry": line}, severity="medium",
+                        dedup_key="hostsfile:" + line, mitre_id="T1565.001"):
+                    n += 1
+        self._set_meta("host_hostsfile_baseline", json.dumps(entries))
+        self.db.record_host_fact(
+            fact_key="integrity.hosts_file", category="integrity",
+            title="Hosts file (DNS override)",
+            state="finding" if entries else "ok",
+            value=(f"{len(entries)} redirect " + ("entry" if len(entries) == 1 else "entries")) if entries else "no redirects",
+            expected="empty of redirects on a home host",
+            reason=("The hosts file overrides DNS. Any non-localhost entry sends a name to an address "
+                    "you chose by hand -- benign only if you put it there.") if entries else None,
+            evidence={"entries": entries} if entries else None)
+        return n, ""
+
+    # -- listening processes (SEC555 Book 2: Listening Processes) -------------
+
+    _LISTEN_PS = r"""
+param()
+$out = @()
+try {
+  Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object {
+    $op = $_.OwningProcess; $proc = $null
+    try { $proc = Get-Process -Id $op -ErrorAction Stop } catch {}
+    $out += [pscustomobject]@{ port=[int]$_.LocalPort; laddr=[string]$_.LocalAddress; procpid=$op; name=[string]$proc.ProcessName; path=[string]$proc.Path }
+  }
+  [pscustomobject]@{ ok=$true; listeners=$out } | ConvertTo-Json -Compress -Depth 4
+} catch { [pscustomobject]@{ ok=$false; error=$_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    _SCRIPT_HOST = re.compile(r"^(powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|installutil)$", re.I)
+    _USERWRITABLE = re.compile(r"[\\/](appdata|temp|tmp|downloads|public)[\\/]", re.I)
+
+    def collect_listeners(self) -> tuple[int, str]:
+        """A process that starts LISTENING for inbound connections and was not
+        before -- especially a script host, or a binary in a user-writable path
+        -- is a backdoor's shape. Baseline (process, port); alert on new ones
+        that are reachable (not loopback-only)."""
+        ok, res, err = _ps_marked(self._LISTEN_PS, timeout=60)
+        if not ok:
+            return 0, f"listening processes: {err}"
+        if not res.get("ok"):
+            return 0, f"listening processes: {res.get('error')}"
+        rows = res.get("listeners") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        now = time.time()
+        current = {}
+        for r in rows:
+            laddr = (r.get("laddr") or "").strip()
+            if laddr in ("127.0.0.1", "::1"):
+                continue    # loopback-only listeners are not reachable from the network
+            name = (r.get("name") or "?").lower()
+            key = f"{name}:{r.get('port')}"
+            current[key] = r
+        prev_raw = self._meta("host_listeners_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for key, r in current.items():
+                if key in prev:
+                    continue
+                name = r.get("name") or "?"
+                path = r.get("path") or ""
+                risky = bool(self._SCRIPT_HOST.match(name)) or bool(path and self._USERWRITABLE.search(path))
+                if self._emit(
+                        kind="listening_process", ts=now,
+                        summary=f"new listener: {name} on {r.get('laddr')}:{r.get('port')}",
+                        detail={"name": name, "port": r.get("port"), "laddr": r.get("laddr"),
+                                "path": path or None, "pid": r.get("procpid"), "script_host_or_userpath": risky},
+                        severity="high" if risky else "low",
+                        dedup_key=f"listener:{key}", mitre_id="T1571"):
+                    n += 1
+        self._set_meta("host_listeners_baseline", json.dumps(sorted(current)))
+        return n, ""
+
+    # -- PowerShell downgrade (SEC555 Book 3: PowerShell Downgrade Attacks) ---
+
+    def collect_ps_downgrade(self) -> tuple[int, str]:
+        """A PowerShell engine below v5 started -- the classic way to escape
+        v5+ script-block logging and AMSI. The classic 'Windows PowerShell'
+        log, event 400, carries EngineVersion."""
+        evs, err = self._read_log("Windows PowerShell", [400], "host_events_cursor_ps400")
+        n = 0
+        for e in evs:
+            msg = e.get("msg") or ""
+            m = re.search(r"EngineVersion=(\d+)\.(\d+)", msg)
+            if not m:
+                continue
+            if int(m.group(1)) >= 5:
+                continue
+            ver = m.group(1) + "." + m.group(2)
+            if self._emit(
+                    kind="powershell_downgrade", ts=float(e.get("t") or time.time()),
+                    summary=f"PowerShell {ver} engine started (below v5 -- evades script-block logging)",
+                    detail={"engine_version": ver, "record": e.get("record"), "excerpt": msg[:300]},
+                    severity="high", dedup_key=f"psdown:{e.get('record')}", mitre_id="T1059.001"):
+                n += 1
+        return n, (err or "")

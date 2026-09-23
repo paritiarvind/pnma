@@ -459,6 +459,149 @@ class UploadSpikeDetection(Detection):
         return out
 
 
+class RogueRootCertDetection(_HostEventRule):
+    rule_id = "rogue_root_certificate"
+    name = "New trusted root certificate"
+    severity = "medium"
+    kind = "root_cert_added"
+    mitre_id = "T1553.004"
+    mitre_name = "Subvert Trust Controls: Install Root Certificate"
+    requires = "the machine and user Trusted Root stores (Cert:\\LocalMachine\\Root, Cert:\\CurrentUser\\Root); read unelevated, diffed against the host's own baseline"
+    blind_spots = (
+        "Snapshot-diff of the Root stores, so it sees an added root on the next collector pass, "
+        "not the instant it lands. It cannot tell a corporate or antivirus root (benign) from a "
+        "malicious one by itself -- it shows the subject and issuer so you can. The first run "
+        "establishes the baseline silently; only roots added after that are reported."
+    )
+
+    def describe(self, row, d):
+        return (
+            "New trusted root certificate installed",
+            f"{row['summary']}\n\n"
+            f"  Subject   {d.get('subject') or '-'}\n"
+            f"  Issuer    {d.get('issuer') or '-'}\n"
+            f"  Store     {d.get('store') or '-'}\n"
+            f"  Thumbprint {d.get('thumbprint') or '-'}\n\n"
+            "WHY THIS MATTERS: a trusted root CA can vouch for ANY site. Installing one is how "
+            "traffic interception (a proxy, a MitM) gets your machine to trust a certificate it "
+            "should not -- the whole padlock model turns on this store staying honest.\n\n"
+            "BENIGN EXPLANATION: your employer's device management, an antivirus that inspects "
+            "HTTPS, or a developer tool (a local proxy like Fiddler/mitmproxy) that you set up "
+            "added it.\n\n"
+            "MALICIOUS EXPLANATION: you did not install anything that would add a root, or the "
+            "subject/issuer is a name you cannot place.\n\n"
+            "NEXT STEP: find it with `Get-ChildItem Cert:\\LocalMachine\\Root, Cert:\\CurrentUser\\Root | "
+            "Where-Object Thumbprint -eq '<thumb>'`. If you cannot explain it, remove it "
+            "(certlm.msc / certmgr.msc) and treat any HTTPS you did since as observed."
+        )
+
+
+class HostsFileTamperDetection(_HostEventRule):
+    rule_id = "hosts_file_tampered"
+    name = "Hosts file redirect added"
+    severity = "medium"
+    kind = "hosts_file_changed"
+    mitre_id = "T1565.001"
+    mitre_name = "Data Manipulation: Stored Data Manipulation"
+    requires = "C:\\Windows\\System32\\drivers\\etc\\hosts (world-readable), diffed against the host's own baseline of non-comment, non-localhost lines"
+    blind_spots = (
+        "Compares non-comment lines to the last snapshot, localhost entries ignored. It sees that "
+        "a redirect was added, not who added it. The first run is the baseline; a redirect already "
+        "present then is recorded as posture, not alerted -- so a pre-existing tamper is shown on "
+        "the Host tab rather than as a new event."
+    )
+
+    def describe(self, row, d):
+        return (
+            "A redirect was added to the hosts file",
+            f"{row['summary']}\n\n  Entry  {d.get('entry') or '-'}\n\n"
+            "WHY THIS MATTERS: the hosts file overrides DNS, silently. One line can send your "
+            "bank's domain to an attacker's server, or point a security/update domain at nowhere "
+            "so protection stops reaching home -- with no certificate warning if a rogue root is "
+            "also in play.\n\n"
+            "BENIGN EXPLANATION: you (or a developer tool, or an ad-blocker's hosts list) added it "
+            "on purpose.\n\n"
+            "MALICIOUS EXPLANATION: you did not edit this file, and the name it maps is one you "
+            "actually use, or the address is not one you recognise.\n\n"
+            "NEXT STEP: open the file (`notepad C:\\Windows\\System32\\drivers\\etc\\hosts`, as "
+            "admin). Remove any line you did not add; a legitimate one is rare on a home machine."
+        )
+
+
+class NewListeningProcessDetection(_HostEventRule):
+    rule_id = "new_listening_process"
+    name = "New listening process"
+    severity = "low"
+    kind = "listening_process"
+    mitre_id = "T1571"
+    mitre_name = "Non-Standard Port"
+    requires = "Get-NetTCPConnection (Listen) plus the owning process, unelevated; diffed against the host's own baseline of (process, port), loopback-only listeners excluded"
+    blind_spots = (
+        "Sampled each pass, so a listener that opens and closes between passes is missed, and it "
+        "is this host only. Loopback-only listeners (127.0.0.1/::1) are excluded as not reachable. "
+        "It names the process behind the port, which a network scan cannot -- but a legitimate dev "
+        "server or game host also opens a new listener, so it is scored high only when the process "
+        "is a script host or lives in a user-writable path, low otherwise."
+    )
+
+    def describe(self, row, d):
+        risky = d.get("script_host_or_userpath")
+        return (
+            f"New listener: {d.get('name') or '?'} on port {d.get('port')}",
+            f"{row['summary']}\n\n"
+            f"  Process  {d.get('name') or '?'}\n"
+            f"  Path     {d.get('path') or '-'}\n"
+            f"  Listen   {d.get('laddr') or '-'}:{d.get('port')}\n\n"
+            "WHY THIS MATTERS: a process listening for INBOUND connections is offering a way in. "
+            "A backdoor, a remote-access tool, or a reverse shell's handler all show up here as a "
+            "new listener that was not there before.\n\n"
+            "BENIGN EXPLANATION: you started a dev server, a game host, a media/file share, or a "
+            "remote-desktop/sync tool.\n\n"
+            + ("MALICIOUS EXPLANATION: the listener is a script host (PowerShell, wscript, mshta) "
+               "or a binary in AppData/Temp/Downloads -- almost nothing legitimate listens from "
+               "there.\n\n" if risky else
+               "MALICIOUS EXPLANATION: the process is one you cannot place, or the port is one you "
+               "did not mean to open to the network.\n\n") +
+            "NEXT STEP: `Get-Process -Id " + str(d.get("pid") or "<pid>") + "` and check its path and "
+            "signature. If it is unfamiliar, stop it and quarantine the binary; close the port at "
+            "the Windows Firewall."
+        )
+
+
+class PowerShellDowngradeDetection(_HostEventRule):
+    rule_id = "powershell_downgrade"
+    name = "PowerShell engine downgrade"
+    severity = "high"
+    kind = "powershell_downgrade"
+    mitre_id = "T1059.001"
+    mitre_name = "Command and Scripting Interpreter: PowerShell"
+    requires = "the classic 'Windows PowerShell' event log, event 400 (EngineVersion); readable unelevated"
+    blind_spots = (
+        "Reads the EngineVersion reported by event 400. It catches the v2 engine being started, "
+        "which is the point -- it does not see what the downgraded session then did (that would "
+        "need the very logging the downgrade defeats). On Windows 11 nothing legitimate starts a "
+        "sub-v5 engine, so this is nearly false-positive-free."
+    )
+
+    def describe(self, row, d):
+        return (
+            f"PowerShell downgraded to v{d.get('engine_version') or '?'}",
+            f"{row['summary']}\n\n  Engine version  {d.get('engine_version') or '?'}\n\n"
+            "WHY THIS MATTERS: PowerShell v5+ logs script blocks and screens them through AMSI. "
+            "Starting the old v2 engine (`powershell -Version 2`) turns both OFF -- it is a "
+            "deliberate move to run hidden, and there is almost no honest reason to do it on a "
+            "modern machine.\n\n"
+            "BENIGN EXPLANATION: a rare legacy installer or a developer explicitly testing on the "
+            "v2 engine. If .NET 2.0/3.5 is not even installed, the engine cannot start and this "
+            "will not fire.\n\n"
+            "MALICIOUS EXPLANATION: you did not ask for an old PowerShell -- something chose the "
+            "version that is not watched.\n\n"
+            "NEXT STEP: treat the session as unlogged and the host as suspect. Check the 4688 "
+            "process events and the autoruns/services from the same minute; the parent process "
+            "that launched it is the thread to pull."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -470,4 +613,8 @@ def host_event_rules() -> list[Detection]:
         NotableConnectionDetection(),
         ArpSweepDetection(),
         UploadSpikeDetection(),
+        RogueRootCertDetection(),
+        HostsFileTamperDetection(),
+        NewListeningProcessDetection(),
+        PowerShellDowngradeDetection(),
     ]

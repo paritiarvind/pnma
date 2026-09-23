@@ -1,0 +1,161 @@
+"""SEC555/GCDA host-integrity detections: the four snapshot-diff collectors
+(trusted-root store, hosts file, listening processes, PowerShell downgrade) and
+their rules. The PowerShell boundary (`_ps_marked`) is mocked, so these run on
+any platform and exercise the collector's own decisions -- first-run silence,
+baseline diff, severity by risk -- and the rules that turn the events into
+findings.
+"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import time
+from pathlib import Path
+
+import pytest
+
+from pnma.collectors import host_events as he
+from pnma.db import Database
+from pnma.detections import host_event_rules as rules
+from pnma.detections.base import DetectionContext
+
+
+def _db():
+    return Database(Path(tempfile.mkdtemp()) / "t.db")
+
+
+class FakeMarked:
+    """Stands in for _ps_marked, dispatching on the collector's script."""
+
+    def __init__(self):
+        self.certs = []
+        self.hosts_lines = []
+        self.listeners = []
+        self.ps400 = []
+
+    def __call__(self, script, timeout=60):
+        if "Cert:" in script:
+            return True, {"ok": True, "certs": self.certs}, ""
+        if "etc\\hosts" in script:
+            return True, {"ok": True, "lines": self.hosts_lines}, ""
+        if "-State Listen" in script:
+            return True, {"ok": True, "listeners": self.listeners}, ""
+        if "Windows PowerShell" in script:
+            mx = max((e["record"] for e in self.ps400), default=None)
+            return True, {"ok": True, "events": self.ps400, "max": mx}, ""
+        raise AssertionError("unexpected script: " + script[:80])
+
+
+@pytest.fixture()
+def fake(monkeypatch):
+    f = FakeMarked()
+    monkeypatch.setattr(he, "_ps_marked", f)
+    return f
+
+
+def _events(db, kind):
+    return db.query(f"SELECT * FROM host_events WHERE kind = '{kind}' ORDER BY id")
+
+
+# ----------------------------------------------------------------- root certs
+
+def test_root_cert_first_run_baselines_then_alerts_on_new(fake):
+    db = _db(); c = he.HostEventCollector(db)
+    fake.certs = [{"thumb": "AAA", "subject": "CN=Microsoft Root", "issuer": "CN=Microsoft Root", "store": "Cert:\\LocalMachine\\Root"}]
+    assert c.collect_root_certs() == (0, "")
+    assert not _events(db, "root_cert_added")                 # first run: silent baseline
+    fact = db.query_one("SELECT state, value FROM host_facts WHERE fact_key = 'integrity.root_certs'")
+    assert fact["state"] == "ok" and "1 roots" in fact["value"]
+
+    fake.certs = fake.certs + [{"thumb": "BBB", "subject": "CN=Interceptor", "issuer": "CN=Interceptor", "store": "Cert:\\CurrentUser\\Root"}]
+    n, err = c.collect_root_certs()
+    assert n == 1 and err == ""
+    ev = _events(db, "root_cert_added")
+    assert len(ev) == 1 and ev[0]["severity"] == "medium"
+    assert json.loads(ev[0]["detail"])["thumbprint"] == "BBB"
+    # a third run, unchanged -> nothing new
+    assert c.collect_root_certs()[0] == 0
+
+
+def test_root_cert_rule_makes_a_finding(fake):
+    db = _db()
+    db.record_host_event(kind="root_cert_added", ts=time.time() - 60, summary="new trusted root certificate: CN=Interceptor",
+                         detail={"thumbprint": "BBB", "subject": "CN=Interceptor", "issuer": "CN=Interceptor", "store": "Cert:\\CurrentUser\\Root"},
+                         severity="medium", dedup_key="rootcert:BBB", mitre_id="T1553.004", sensor_id="host")
+    f = rules.RogueRootCertDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and f[0].mitre_id == "T1553.004" and "root certificate" in f[0].title.lower()
+
+
+# ----------------------------------------------------------------- hosts file
+
+def test_hosts_file_ignores_localhost_and_alerts_on_redirect(fake):
+    db = _db(); c = he.HostEventCollector(db)
+    fake.hosts_lines = ["127.0.0.1 localhost", "::1 localhost"]
+    assert c.collect_hosts_file() == (0, "")
+    fact = db.query_one("SELECT state FROM host_facts WHERE fact_key = 'integrity.hosts_file'")
+    assert fact["state"] == "ok"                              # localhost-only == no redirects
+
+    fake.hosts_lines = fake.hosts_lines + ["45.13.7.22 login.microsoftonline.com"]
+    n, err = c.collect_hosts_file()
+    assert n == 1
+    ev = _events(db, "hosts_file_changed")
+    assert len(ev) == 1 and json.loads(ev[0]["detail"])["entry"].endswith("login.microsoftonline.com")
+    fact = db.query_one("SELECT state, value FROM host_facts WHERE fact_key = 'integrity.hosts_file'")
+    assert fact["state"] == "finding" and "1 redirect" in fact["value"]
+
+
+# --------------------------------------------------------------- listeners
+
+def test_new_listener_scores_script_host_high_and_skips_loopback(fake):
+    db = _db(); c = he.HostEventCollector(db)
+    fake.listeners = [{"port": 445, "laddr": "0.0.0.0", "procpid": 4, "name": "System", "path": ""}]
+    assert c.collect_listeners() == (0, "")                   # first run: baseline
+
+    fake.listeners = fake.listeners + [
+        {"port": 4444, "laddr": "0.0.0.0", "procpid": 6210, "name": "powershell",
+         "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"},
+        {"port": 5000, "laddr": "127.0.0.1", "procpid": 7000, "name": "devserver", "path": "C:\\dev\\dev.exe"},  # loopback -> skipped
+    ]
+    n, err = c.collect_listeners()
+    assert n == 1                                             # only the reachable powershell listener
+    ev = _events(db, "listening_process")
+    assert len(ev) == 1 and ev[0]["severity"] == "high"
+    d = json.loads(ev[0]["detail"])
+    assert d["port"] == 4444 and d["script_host_or_userpath"] is True
+
+
+def test_listener_rule_makes_a_finding(fake):
+    db = _db()
+    db.record_host_event(kind="listening_process", ts=time.time() - 60, summary="new listener: nc on 0.0.0.0:1337",
+                         detail={"name": "nc", "port": 1337, "laddr": "0.0.0.0", "path": "C:\\Users\\x\\Downloads\\nc.exe",
+                                 "pid": 9, "script_host_or_userpath": True},
+                         severity="high", dedup_key="listener:nc:1337", mitre_id="T1571", sensor_id="host")
+    f = rules.NewListeningProcessDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "listener" in f[0].title.lower()
+
+
+# ------------------------------------------------------------- ps downgrade
+
+def test_ps_downgrade_flags_sub_v5_only(fake):
+    db = _db(); c = he.HostEventCollector(db)
+    fake.ps400 = [
+        {"record": 10, "id": 400, "t": time.time() - 30, "level": "Information",
+         "props": [], "msg": "Engine state is changed from None to Available. EngineVersion=2.0 RunspaceId=abc"},
+        {"record": 11, "id": 400, "t": time.time() - 20, "level": "Information",
+         "props": [], "msg": "Engine state is changed from None to Available. EngineVersion=5.1 RunspaceId=def"},
+    ]
+    n, err = c.collect_ps_downgrade()
+    assert n == 1
+    ev = _events(db, "powershell_downgrade")
+    assert len(ev) == 1 and ev[0]["severity"] == "high"
+    assert json.loads(ev[0]["detail"])["engine_version"] == "2.0"
+
+
+def test_ps_downgrade_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="powershell_downgrade", ts=time.time() - 60,
+                         summary="PowerShell 2.0 engine started", detail={"engine_version": "2.0", "record": 10},
+                         severity="high", dedup_key="psdown:10", mitre_id="T1059.001", sensor_id="host")
+    f = rules.PowerShellDowngradeDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "v2.0" in f[0].title and f[0].mitre_id == "T1059.001"

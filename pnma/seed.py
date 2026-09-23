@@ -314,6 +314,20 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
          {"raddr": "45.13.7.22", "rport": 8443, "lport": 51422, "pid": 4120, "process": "powershell.exe",
           "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
           "tags": ["script_host_network", "uncommon_port"]}, "high", "T1105"),
+        # SEC555/GCDA host-integrity detections (unelevated, snapshot-diff).
+        ("root_cert_added", t + 200, "new trusted root certificate: CN=Interceptor Root CA",
+         {"thumbprint": "AABBCCDDEEFF00112233445566778899AABBCCDD", "subject": "CN=Interceptor Root CA, O=Unknown",
+          "issuer": "CN=Interceptor Root CA, O=Unknown", "store": "Cert:\\CurrentUser\\Root"}, "medium", "T1553.004"),
+        ("hosts_file_changed", t + 210, "hosts file redirect added: 45.13.7.22 login.microsoftonline.com",
+         {"entry": "45.13.7.22 login.microsoftonline.com"}, "medium", "T1565.001"),
+        ("listening_process", t + 220, "new listener: powershell on 0.0.0.0:4444",
+         {"name": "powershell", "port": 4444, "laddr": "0.0.0.0", "pid": 6210,
+          "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "script_host_or_userpath": True},
+         "high", "T1571"),
+        ("powershell_downgrade", t + 230, "PowerShell 2.0 engine started (below v5 -- evades script-block logging)",
+         {"engine_version": "2.0", "record": 400123,
+          "excerpt": "Engine state is changed from None to Available. NewEngineState=Available EngineVersion=2.0 RunspaceId=..."},
+         "high", "T1059.001"),
         # And one attributed row, so the demo shows the agent's own script is
         # visible but not alerted on.
         ("powershell_block", t + 60, "PNMA's own script",

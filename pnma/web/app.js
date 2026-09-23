@@ -41,12 +41,13 @@ const STATE_KEYS = ['ok', 'finding', 'unknown'];
  * a payload with four categories, and an empty fifth group would read as a
  * clean fifth category. Anything unrecognised sorts to the end rather than
  * being dropped, so a new collector category shows up without a UI change. */
-const CATEGORY_ORDER = ['defender', 'audit', 'persistence', 'network', 'drivers'];
+const CATEGORY_ORDER = ['defender', 'audit', 'persistence', 'integrity', 'network', 'drivers'];
 
 const CATEGORY_LABELS = {
   defender:    'Defender',
   audit:       'Audit & logging',
   persistence: 'Persistence',
+  integrity:   'Integrity',
   network:     'Network',
   drivers:     'Drivers',
 };
