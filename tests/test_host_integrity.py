@@ -249,3 +249,48 @@ def test_defender_rule_makes_a_finding():
                          severity="high", dedup_key="defender:5", mitre_id="T1204", sensor_id="host")
     f = rules.DefenderThreatDetection().evaluate(DetectionContext(db=db, now=time.time()))
     assert len(f) == 1 and "EICAR" in f[0].title
+
+
+# --------------------------------------------------------------- dns / admin
+
+def test_dns_server_change_baselines_then_alerts(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "adapters": [
+        {"alias": "Wi-Fi", "servers": ["192.168.0.1"]}]}, ""))
+    assert c.collect_dns_servers() == (0, "")               # first run: baseline
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "adapters": [
+        {"alias": "Wi-Fi", "servers": ["192.168.0.1", "45.13.7.22"]}]}, ""))
+    n, err = c.collect_dns_servers()
+    assert n == 1
+    ev = _events(db, "dns_server_changed")
+    assert len(ev) == 1 and "45.13.7.22" in json.loads(ev[0]["detail"])["added"]
+
+
+def test_dns_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="dns_server_changed", ts=time.time() - 60, summary="DNS server changed on Wi-Fi",
+                         detail={"adapter": "Wi-Fi", "servers": ["45.13.7.22"], "previous": ["192.168.0.1"]},
+                         severity="medium", dedup_key="dns:x", mitre_id="T1557", sensor_id="host")
+    f = rules.DnsServerChangedDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "resolver" in f[0].title.lower()
+
+
+def test_admin_group_new_member_alerts_high(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "members": ["WKS-arvind"]}, ""))
+    assert c.collect_admin_group() == (0, "")               # first run: baseline
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "members": ["WKS-arvind", "WKS-intruder"]}, ""))
+    n, err = c.collect_admin_group()
+    assert n == 1
+    ev = _events(db, "admin_group_changed")
+    assert len(ev) == 1 and ev[0]["severity"] == "high"
+    assert "intruder" in json.loads(ev[0]["detail"])["member"]
+
+
+def test_admin_group_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="admin_group_changed", ts=time.time() - 60, summary="new local administrator: X",
+                         detail={"member": "WKS-intruder", "members": []}, severity="high",
+                         dedup_key="admingrp:x", mitre_id="T1098", sensor_id="host")
+    f = rules.LocalAdminGroupDiffDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "administrator" in f[0].title.lower()

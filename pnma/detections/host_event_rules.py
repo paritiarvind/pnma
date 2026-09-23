@@ -711,6 +711,73 @@ class DefenderThreatDetection(_HostEventRule):
         )
 
 
+class DnsServerChangedDetection(_HostEventRule):
+    rule_id = "dns_server_changed"
+    name = "DNS resolver changed"
+    severity = "medium"
+    kind = "dns_server_changed"
+    mitre_id = "T1557"
+    mitre_name = "Adversary-in-the-Middle"
+    requires = "Get-DnsClientServerAddress per adapter, unelevated; diffed against the host's own baseline"
+    blind_spots = (
+        "Snapshot-diff per adapter, so it sees a changed resolver on the next pass. Joining a "
+        "different network or a VPN legitimately changes DNS, so on a laptop that moves around this "
+        "will speak up for those too -- the baseline re-settles once you are back. It sees which "
+        "server is configured, not what it answered."
+    )
+
+    def describe(self, row, d):
+        return (
+            f"DNS resolver changed on {d.get('adapter') or 'an adapter'}",
+            f"{row['summary']}\n\n"
+            f"  Adapter   {d.get('adapter') or '-'}\n"
+            f"  Now       {', '.join(d.get('servers') or []) or '-'}\n"
+            f"  Was       {', '.join(d.get('previous') or []) or '-'}\n\n"
+            "WHY THIS MATTERS: the DNS resolver turns every name your machine looks up into an "
+            "address. Point it at an attacker's server and they can silently send your bank, your "
+            "email, anything, to a machine they control -- often with no visible warning.\n\n"
+            "BENIGN EXPLANATION: you joined a new network, turned on a VPN, or switched to a custom "
+            "resolver (1.1.1.1, a Pi-hole) yourself.\n\n"
+            "MALICIOUS EXPLANATION: you changed nothing, and the new server is an address you cannot "
+            "place.\n\n"
+            "NEXT STEP: `Get-DnsClientServerAddress` to confirm, and set it back to your router or a "
+            "resolver you trust (Network settings > adapter > DNS). Pair this with the rogue-root and "
+            "hosts-file findings -- together they are the interception toolkit."
+        )
+
+
+class LocalAdminGroupDiffDetection(_HostEventRule):
+    rule_id = "local_admin_group_diff"
+    name = "New local administrator"
+    severity = "high"
+    kind = "admin_group_changed"
+    mitre_id = "T1098"
+    mitre_name = "Account Manipulation"
+    requires = "Get-LocalGroupMember on the Administrators group (SID S-1-5-32-544), unelevated; diffed against the host's own baseline"
+    blind_spots = (
+        "Reads the local Administrators group directly, so it works without elevation -- unlike the "
+        "4732-based rule, which needs the elevated Security log. Snapshot-diff, so a member added and "
+        "removed between passes is missed. It sees who is an administrator now, not who made them one "
+        "(that is the 4732 event, elevated)."
+    )
+
+    def describe(self, row, d):
+        return (
+            f"New local administrator: {d.get('member') or '?'}",
+            f"{row['summary']}\n\n  Member  {d.get('member') or '?'}\n\n"
+            "WHY THIS MATTERS: local administrator is full control of this machine. Adding an account "
+            "to that group is how an intruder makes their access permanent and total -- it is one of "
+            "the most reliable signs of a real compromise.\n\n"
+            "BENIGN EXPLANATION: you added a new user and made them an admin on purpose, or joined a "
+            "management/domain setup that manages the group.\n\n"
+            "MALICIOUS EXPLANATION: you did not add anyone, and the name is an account you do not "
+            "recognise or did not expect to have admin.\n\n"
+            "NEXT STEP: `Get-LocalGroupMember Administrators` to confirm. If it is not yours, remove "
+            "it (`Remove-LocalGroupMember`), change your password from another device, and treat the "
+            "host as compromised -- work the autoruns, services and logon alerts around the same time."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -729,4 +796,6 @@ def host_event_rules() -> list[Detection]:
         FirewallRuleAddedDetection(),
         InternalLateralConnectionDetection(),
         DefenderThreatDetection(),
+        DnsServerChangedDetection(),
+        LocalAdminGroupDiffDetection(),
     ]

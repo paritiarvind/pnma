@@ -59,7 +59,7 @@ EVENT_KINDS = (
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
     "powershell_downgrade", "firewall_rule_added", "lateral_connection",
-    "defender_threat", "account_lifecycle",
+    "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -386,6 +386,8 @@ class HostEventCollector:
             ("ps_downgrade", self.collect_ps_downgrade),
             ("firewall_rules", self.collect_firewall_rules),
             ("defender_events", self.collect_defender_events),
+            ("dns_servers", self.collect_dns_servers),
+            ("admin_group", self.collect_admin_group),
         ):
             try:
                 n, unknown = fn()
@@ -1274,4 +1276,106 @@ $res | ConvertTo-Json -Compress -Depth 5
         mx = res.get("max")
         if mx:
             self._set_meta("host_events_cursor_defender", str(int(mx)))
+        return n, ""
+
+
+    # -- DNS resolver (SEC555 Book 3: Network Settings baseline) --------------
+
+    _DNS_PS = r"""
+param()
+try {
+  $out = @()
+  Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction Stop | Where-Object { $_.ServerAddresses.Count -gt 0 } | ForEach-Object {
+    $out += [pscustomobject]@{ alias = [string]$_.InterfaceAlias; servers = @($_.ServerAddresses) }
+  }
+  [pscustomobject]@{ ok = $true; adapters = $out } | ConvertTo-Json -Compress -Depth 4
+} catch { [pscustomobject]@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    def collect_dns_servers(self) -> tuple[int, str]:
+        """The DNS resolver decides what every name on this machine points to.
+        A changed/added DNS server is how an attacker-in-the-middle silently
+        redirects traffic. Snapshot per adapter; alert on a new server."""
+        ok, res, err = _ps_marked(self._DNS_PS, timeout=45)
+        if not ok:
+            return 0, f"dns servers: {err}"
+        if not res.get("ok"):
+            return 0, f"dns servers: {res.get('error')}"
+        adapters = res.get("adapters") or []
+        if isinstance(adapters, dict):
+            adapters = [adapters]
+        now = time.time()
+        current = {}
+        for a in adapters:
+            servers = a.get("servers")
+            servers = [servers] if isinstance(servers, str) else (servers or [])
+            if servers:
+                current[a.get("alias") or "?"] = sorted(servers)
+        prev_raw = self._meta("host_dns_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = json.loads(prev_raw)
+            for alias, servers in current.items():
+                added = [s for s in servers if s not in (prev.get(alias) or [])]
+                if added:
+                    if self._emit(
+                            kind="dns_server_changed", ts=now,
+                            summary=f"DNS server changed on {alias}: now {', '.join(servers)}",
+                            detail={"adapter": alias, "servers": servers, "added": added,
+                                    "previous": prev.get(alias) or []},
+                            severity="medium", dedup_key=f"dns:{alias}:{','.join(added)}", mitre_id="T1557"):
+                        n += 1
+        self._set_meta("host_dns_baseline", json.dumps(current))
+        self.db.record_host_fact(
+            fact_key="network.dns_servers", category="network",
+            title="DNS resolvers",
+            state="ok", value="; ".join(f"{k}: {', '.join(v)}" for k, v in current.items()) or "none",
+            expected="stable; a changed resolver is rare and deliberate", reason=None)
+        return n, ""
+
+    # -- local Administrators group (SEC555 Book 3: Security Software / Accounts)
+
+    _ADMINGRP_PS = r"""
+param()
+try {
+  $g = Get-LocalGroup -SID 'S-1-5-32-544' -ErrorAction Stop
+  $m = @(Get-LocalGroupMember -Group $g.Name -ErrorAction Stop | ForEach-Object { [string]$_.Name })
+  [pscustomobject]@{ ok = $true; members = $m } | ConvertTo-Json -Compress
+} catch { [pscustomobject]@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    def collect_admin_group(self) -> tuple[int, str]:
+        """A new member of the local Administrators group is privilege
+        escalation / persistence. This reads the group directly, UNELEVATED --
+        the 4732-based auth_new_admin rule needs the elevated collector, so an
+        unelevated Hearth would otherwise have no admin-group coverage."""
+        ok, res, err = _ps_marked(self._ADMINGRP_PS, timeout=45)
+        if not ok:
+            return 0, f"admin group: {err}"
+        if not res.get("ok"):
+            return 0, f"admin group: {res.get('error')}"
+        members = res.get("members") or []
+        if isinstance(members, str):
+            members = [members]
+        current = sorted(m for m in members if m)
+        prev_raw = self._meta("host_admingroup_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for m in current:
+                if m in prev:
+                    continue
+                if self._emit(
+                        kind="admin_group_changed", ts=time.time(),
+                        summary=f"new local administrator: {m}",
+                        detail={"member": m, "members": current}, severity="high",
+                        dedup_key=f"admingrp:{m}", mitre_id="T1098"):
+                    n += 1
+        self._set_meta("host_admingroup_baseline", json.dumps(current))
+        self.db.record_host_fact(
+            fact_key="integrity.admin_group", category="integrity",
+            title="Local Administrators group",
+            state="ok", value=f"{len(current)} " + ("member" if len(current) == 1 else "members"),
+            expected="stable; a new administrator is rare and deliberate",
+            reason=None, evidence={"members": current})
         return n, ""

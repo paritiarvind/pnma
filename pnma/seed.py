@@ -336,6 +336,11 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
         ("defender_threat", t + 260, "Defender: Trojan:Win32/Wacatac.B!ml (quarantined) -- C:\\Users\\Public\\aG7kP2xQ.exe",
          {"threat": "Trojan:Win32/Wacatac.B!ml", "action": "quarantined", "path": "C:\\Users\\Public\\aG7kP2xQ.exe",
           "severity_name": "Severe", "user": "DESKTOP\\arvind", "record": 8801, "event_id": 1117}, "high", "T1204"),
+        ("dns_server_changed", t + 270, "DNS server changed on Wi-Fi: now 45.13.7.22, 8.8.8.8",
+         {"adapter": "Wi-Fi", "servers": ["45.13.7.22", "8.8.8.8"], "added": ["45.13.7.22"], "previous": ["192.168.0.1"]},
+         "medium", "T1557"),
+        ("admin_group_changed", t + 280, "new local administrator: DESKTOP\\svc_helper",
+         {"member": "DESKTOP\\svc_helper", "members": ["DESKTOP\\arvind", "DESKTOP\\svc_helper"]}, "high", "T1098"),
         # And one attributed row, so the demo shows the agent's own script is
         # visible but not alerted on.
         ("powershell_block", t + 60, "PNMA's own script",
