@@ -59,6 +59,7 @@ EVENT_KINDS = (
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
     "powershell_downgrade", "firewall_rule_added", "lateral_connection",
+    "defender_threat", "account_lifecycle",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -384,6 +385,7 @@ class HostEventCollector:
             ("listeners", self.collect_listeners),
             ("ps_downgrade", self.collect_ps_downgrade),
             ("firewall_rules", self.collect_firewall_rules),
+            ("defender_events", self.collect_defender_events),
         ):
             try:
                 n, unknown = fn()
@@ -780,7 +782,7 @@ $res | ConvertTo-Json -Compress -Depth 4
 
     _AUTH_PS = r"""
 $since = %(since)s
-$xpath = "*[System[(EventID=4625 or EventID=4740 or EventID=4732 or EventID=4624) and (EventRecordID > $since)]]"
+$xpath = "*[System[(EventID=4625 or EventID=4740 or EventID=4732 or EventID=4624 or EventID=4722 or EventID=4724 or EventID=4725 or EventID=4726 or EventID=4767) and (EventRecordID > $since)]]"
 $out = @()
 try {
   $evs = @(Get-WinEvent -LogName Security -FilterXPath $xpath -Oldest -MaxEvents %(cap)s -ErrorAction Stop)
@@ -1214,4 +1216,62 @@ try {
             title="Inbound firewall allow rules",
             state="ok", value=f"{len(current)} inbound allow rules",
             expected="stable; a new inbound hole is deliberate", reason=None)
+        return n, ""
+
+
+    # -- Windows Defender verdicts (SEC555 WB3: Defender Operational log) ------
+
+    _DEFENDER_PS = r"""
+$since = %(since)s
+$xpath = "*[System[(EventID=1116 or EventID=1117) and (EventRecordID > $since)]]"
+$out = @()
+try {
+  $evs = @(Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -FilterXPath $xpath -Oldest -MaxEvents %(cap)s -ErrorAction Stop)
+  foreach ($e in $evs) {
+    $d = @{}
+    try { $x = [xml]$e.ToXml(); foreach ($n in $x.Event.EventData.Data) { if ($n.Name) { $d[[string]$n.Name] = [string]$n.'#text' } } } catch {}
+    $out += [pscustomobject]@{ record = $e.RecordId; id = $e.Id; t = [int]([DateTimeOffset]$e.TimeCreated).ToUnixTimeSeconds(); data = $d }
+  }
+  $res = [pscustomobject]@{ ok = $true; events = $out; max = ($evs | Measure-Object -Property RecordId -Maximum).Maximum }
+} catch {
+  if ($_.Exception.Message -match 'No events were found') { $res = [pscustomobject]@{ ok = $true; events = @(); max = $null } }
+  else { $res = [pscustomobject]@{ ok = $false; error = $_.Exception.Message } }
+}
+$res | ConvertTo-Json -Compress -Depth 5
+"""
+
+    def collect_defender_events(self) -> tuple[int, str]:
+        """Microsoft Defender's own malware/PUA verdicts (1116 detected, 1117
+        action taken). Defender already did the hard part -- this surfaces its
+        finding into the timeline. Readable unelevated."""
+        since = int(self._meta("host_events_cursor_defender") or 0)
+        ok, res, err = _ps_marked(self._DEFENDER_PS % {"since": since, "cap": self.WINEVENT_CAP}, timeout=90)
+        if not ok:
+            return 0, f"defender log: {err}"
+        if not res.get("ok"):
+            return 0, f"defender log: {res.get('error')}"
+        events = res.get("events") or []
+        if isinstance(events, dict):
+            events = [events]
+        n = 0
+        for e in events:
+            d = e.get("data") or {}
+            if not isinstance(d, dict):
+                d = {}
+            threat = d.get("Threat Name") or d.get("Threat ID") or "unknown threat"
+            action = d.get("Action Name") or d.get("Action ID") or "detected"
+            path = d.get("Path") or d.get("Process Name") or ""
+            sev_name = (d.get("Severity Name") or "").lower()
+            sev = "high" if sev_name in ("severe", "high", "critical") else "medium"
+            if self._emit(
+                    kind="defender_threat", ts=float(e.get("t") or time.time()),
+                    summary=f"Defender: {threat} ({action})" + (f" -- {path[-60:]}" if path else ""),
+                    detail={"threat": threat, "action": action, "path": path,
+                            "severity_name": d.get("Severity Name"), "user": d.get("Detection User"),
+                            "record": e.get("record"), "event_id": e.get("id")},
+                    severity=sev, dedup_key=f"defender:{e.get('record')}", mitre_id="T1204"):
+                n += 1
+        mx = res.get("max")
+        if mx:
+            self._set_meta("host_events_cursor_defender", str(int(mx)))
         return n, ""

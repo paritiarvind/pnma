@@ -106,3 +106,24 @@ def test_auth_collector_keeps_only_interesting_4624(monkeypatch):
     c._collect_auth()
     kept = db.query("SELECT event_id, logon_type FROM auth_events ORDER BY id")
     assert [(r["event_id"], r["logon_type"]) for r in kept] == [(4624, "10"), (4625, "3")]
+
+
+def test_account_lifecycle_flags_reset_disable_delete():
+    import tempfile, time, json
+    from pathlib import Path
+    from pnma.db import Database
+    from pnma.detections.base import DetectionContext
+    from pnma.detections.auth_rules import AccountLifecycleDetection
+    db = Database(Path(tempfile.mkdtemp()) / "t.db")
+    now = time.time()
+    db.record_auth_event(ts=now - 60, event_id=4724, account='guest', domain='D', source_ip=None, logon_type=None,
+                         status=None, detail={'TargetUserName': 'guest', 'SubjectUserName': 'attacker'}, dedup_key='a')
+    db.record_auth_event(ts=now - 50, event_id=4726, account='olduser', domain='D', source_ip=None, logon_type=None,
+                         status=None, detail={'TargetUserName': 'olduser', 'SubjectUserName': 'admin'}, dedup_key='b')
+    db.record_auth_event(ts=now - 40, event_id=4767, account='arvind', domain='D', source_ip=None, logon_type=None,
+                         status=None, detail={'TargetUserName': 'arvind', 'SubjectUserName': 'arvind'}, dedup_key='c')
+    f = AccountLifecycleDetection().evaluate(DetectionContext(db=db, now=now))
+    by = {x.evidence['event_id']: x for x in f}
+    assert set(by) == {'4724', '4726', '4767'}
+    assert by['4724'].severity == 'high' and by['4726'].severity == 'high' and by['4767'].severity == 'low'
+    assert 'by attacker' in by['4724'].title       # actor != target shown

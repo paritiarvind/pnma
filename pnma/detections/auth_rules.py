@@ -307,6 +307,71 @@ class AnomalousLogonTypeDetection(Detection):
         return out
 
 
+class AccountLifecycleDetection(Detection):
+    """An account was reset, disabled, deleted, re-enabled or unlocked -- the
+    management events beyond the login failures the other rules watch."""
+
+    rule_id = "account_lifecycle_change"
+    name = "Account was reset, disabled, deleted or re-enabled"
+    severity = "medium"
+    mitre_id = "T1098"
+    mitre_name = "Account Manipulation"
+    requires = "Security log events 4722/4724/4725/4726/4767 -- needs the collector running elevated"
+    blind_spots = (
+        "Reads the account-management events that carry meaning on a home host: re-enable (4722), "
+        "password reset by another account (4724), disable (4725), delete (4726), unlock (4767). "
+        "Routine self-service password changes (4723) and the chatty 'account changed' (4738) are "
+        "deliberately not watched, to keep this quiet. It sees the change was made, and by which "
+        "account, not whether it was authorised."
+    )
+    WINDOW_S = 24 * 3600
+    _MEANING = {
+        "4724": ("high", "password reset", "T1098", "Account Manipulation"),
+        "4726": ("high", "account deleted", "T1531", "Account Access Removal"),
+        "4725": ("medium", "account disabled", "T1531", "Account Access Removal"),
+        "4722": ("medium", "account re-enabled", "T1098", "Account Manipulation"),
+        "4767": ("low", "account unlocked", "T1098", "Account Manipulation"),
+    }
+
+    def evaluate(self, ctx: DetectionContext) -> list[Finding]:
+        rows = ctx.db.query(
+            "SELECT event_id, account, detail, ts FROM auth_events "
+            "WHERE event_id IN (4722,4724,4725,4726,4767) AND ts >= ? ORDER BY ts DESC LIMIT 100",
+            (ctx.now - self.WINDOW_S,))
+        out = []
+        for r in rows:
+            eid = str(r["event_id"])
+            sev, what, mitre, mitre_name = self._MEANING.get(eid, ("low", "changed", "T1098", "Account Manipulation"))
+            try:
+                d = json.loads(r["detail"] or "{}")
+            except (TypeError, ValueError):
+                d = {}
+            actor = d.get("SubjectUserName")
+            target = r["account"] or d.get("TargetUserName") or "an account"
+            by = (" by " + actor) if actor and actor != target else ""
+            out.append(Finding(
+                dedup_key="acctlife:%s:%s:%d" % (eid, target, int(r["ts"])),
+                severity=sev,
+                title="Account '%s' %s%s" % (target, what, by),
+                description=(
+                    "The account '" + target + "' was " + what + by + ".\n\n"
+                    "WHY THIS MATTERS: resetting, disabling or deleting an account is how an intruder "
+                    "takes one over (reset its password), locks you out (disable/delete yours), or "
+                    "hides tracks. On a home machine these are rare and deliberate.\n\n"
+                    "BENIGN EXPLANATION: you (or the family admin) changed a password, removed an old "
+                    "account, or re-enabled one you had switched off.\n\n"
+                    "MALICIOUS EXPLANATION: you did nothing to this account, or the acting account is "
+                    "not one you expected to be making the change.\n\n"
+                    "NEXT STEP: if it was not you, assume the acting account is compromised -- change "
+                    "its password from another device and review the Administrators group and recent "
+                    "logons. A password reset you did not request on YOUR account is urgent."
+                ),
+                evidence={"event_id": eid, "account": target, "actor": actor, "change": what},
+                mitre_id=mitre, mitre_name=mitre_name,
+            ))
+        return out
+
+
 def auth_rules() -> list[Detection]:
     return [
         BruteForceDetection(),
@@ -314,4 +379,5 @@ def auth_rules() -> list[Detection]:
         AccountLockoutDetection(),
         NewAdminMemberDetection(),
         AnomalousLogonTypeDetection(),
+        AccountLifecycleDetection(),
     ]

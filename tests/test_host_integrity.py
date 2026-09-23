@@ -225,3 +225,27 @@ def test_lateral_rule_makes_a_finding():
                          severity="medium", dedup_key="lateral:x", mitre_id="T1021", sensor_id="host")
     f = rules.InternalLateralConnectionDetection().evaluate(DetectionContext(db=db, now=time.time()))
     assert len(f) == 1 and "3389" in f[0].title
+
+
+# --------------------------------------------------------------- defender
+
+def test_defender_events_emit_threats(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    evs = [{"record": 5, "id": 1117, "t": time.time() - 30,
+            "data": {"Threat Name": "Trojan:Win32/Wacatac.B!ml", "Action Name": "Quarantine",
+                     "Path": "C:/Users/Public/x.exe", "Severity Name": "Severe"}}]
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "events": evs, "max": 5}, ""))
+    n, err = c.collect_defender_events()
+    assert n == 1
+    ev = _events(db, "defender_threat")
+    assert len(ev) == 1 and ev[0]["severity"] == "high"
+    assert json.loads(ev[0]["detail"])["threat"] == "Trojan:Win32/Wacatac.B!ml"
+
+
+def test_defender_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="defender_threat", ts=time.time() - 60, summary="Defender: EICAR (quarantined)",
+                         detail={"threat": "EICAR_Test_File", "action": "quarantined", "path": "C:/t/e.com", "severity_name": "Severe"},
+                         severity="high", dedup_key="defender:5", mitre_id="T1204", sensor_id="host")
+    f = rules.DefenderThreatDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "EICAR" in f[0].title

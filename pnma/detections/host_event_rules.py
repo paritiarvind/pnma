@@ -671,6 +671,46 @@ class InternalLateralConnectionDetection(_HostEventRule):
         )
 
 
+class DefenderThreatDetection(_HostEventRule):
+    rule_id = "defender_threat"
+    name = "Windows Defender detected a threat"
+    severity = "high"
+    kind = "defender_threat"
+    mitre_id = "T1204"
+    mitre_name = "User Execution"
+    requires = "Microsoft-Windows-Windows Defender/Operational events 1116 (detected) and 1117 (action taken); readable unelevated"
+    blind_spots = (
+        "Surfaces Defender's own verdicts, so it only sees what Defender caught -- a threat Defender "
+        "misses, or that ran while real-time protection was off (see the Defender posture facts), is "
+        "not here. It reports the detection and the action Defender took; whether the action fully "
+        "cleaned the machine is a separate question. This is a strong signal precisely because the "
+        "false-positive rate of Defender's own engine is low."
+    )
+
+    def describe(self, row, d):
+        threat = d.get("threat") or "a threat"
+        action = d.get("action") or "detected"
+        return (
+            f"Defender flagged {threat}",
+            f"{row['summary']}\n\n"
+            f"  Threat   {threat}\n"
+            f"  Action   {action}\n"
+            f"  Path     {d.get('path') or '-'}\n"
+            f"  Severity {d.get('severity_name') or '-'}\n\n"
+            "WHY THIS MATTERS: this is your own antivirus reporting real malware or a potentially "
+            "unwanted program on this machine. Defender rarely cries wolf, so a verdict here is worth "
+            "taking at face value.\n\n"
+            "BENIGN EXPLANATION: a hacking tool or keygen you keep on purpose (Defender flags those "
+            "as PUA), or a security sample you are studying in a folder Defender still scans.\n\n"
+            "MALICIOUS EXPLANATION: you did not put anything there that would trip the AV -- something "
+            "arrived on its own.\n\n"
+            "NEXT STEP: open Windows Security > Protection history for the full entry. If the action "
+            "was 'quarantined'/'removed' you are likely fine; if 'allowed' or 'blocked' only, act -- "
+            "and check the autoruns, services and PowerShell alerts from the same time for what "
+            "dropped it."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -688,4 +728,5 @@ def host_event_rules() -> list[Detection]:
         PowerShellDowngradeDetection(),
         FirewallRuleAddedDetection(),
         InternalLateralConnectionDetection(),
+        DefenderThreatDetection(),
     ]

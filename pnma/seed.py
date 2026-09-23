@@ -333,6 +333,9 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
         ("lateral_connection", t + 250, "powershell.exe -> 192.168.0.145:3389 (RDP), first seen",
          {"raddr": "192.168.0.145", "rport": 3389, "service": "RDP", "process": "powershell.exe",
           "path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "pid": 4120}, "medium", "T1021"),
+        ("defender_threat", t + 260, "Defender: Trojan:Win32/Wacatac.B!ml (quarantined) -- C:\\Users\\Public\\aG7kP2xQ.exe",
+         {"threat": "Trojan:Win32/Wacatac.B!ml", "action": "quarantined", "path": "C:\\Users\\Public\\aG7kP2xQ.exe",
+          "severity_name": "Severe", "user": "DESKTOP\\arvind", "record": 8801, "event_id": 1117}, "high", "T1204"),
         # And one attributed row, so the demo shows the agent's own script is
         # visible but not alerted on.
         ("powershell_block", t + 60, "PNMA's own script",
@@ -390,6 +393,11 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
                          source_ip='185.220.101.47', logon_type='10', status=None,
                          detail={'TargetUserName': 'arvind', 'LogonType': '10', 'IpAddress': '185.220.101.47'},
                          dedup_key='seed:rdp')
+    # An admin resetting another account's password -> account_lifecycle_change.
+    db.record_auth_event(ts=ta - 240, event_id=4724, account='guest', domain='DESKTOP',
+                         source_ip=None, logon_type=None, status=None,
+                         detail={'TargetUserName': 'guest', 'SubjectUserName': 'svc_helper'},
+                         dedup_key='seed:acctreset')
     # Connection endpoints: a regular beacon (low-jitter, ~10 min) and a
     # brand-new external destination for a non-browser process, so the
     # beaconing and new_external_destination rules fire on the demo.
