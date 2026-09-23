@@ -515,6 +515,23 @@
    * percentage of *everything*, so unknown costs exactly what a finding
    * costs -- that is the gamification rule of this page, and it is the same
    * rule the host module was built on. */
+  function coverageHead(net, hs, is) {
+    const dom = [net, { ok: hs.ok, finding: hs.finding, unknown: hs.unknown },
+                 { ok: is.ok, finding: is.finding, unknown: is.unknown }];
+    let ok = 0, sum = 0;
+    for (const d of dom) { ok += d.ok; sum += d.ok + d.finding + d.unknown; }
+    const score = sum ? Math.round((ok / sum) * 100) : null;
+    const back = sum - ok;
+    return el('div', { class: 'coverage__head' }, [
+      el('h3', { class: 'coverage__title', text: 'Coverage' }),
+      el('div', { class: 'coverage__score' }, [
+        el('span', { class: 'coverage__pct', text: score === null ? '\u2014' : score + '%' }),
+        el('span', { class: 'coverage__lbl', text: 'measured and passing' }),
+        back ? el('span', { class: 'coverage__back', text: back + ' ' + plural(back, 'point') + ' to win back' }) : null,
+      ]),
+    ]);
+  }
+
   function ring(label, counts, sub, opts) {
     opts = opts || {};
     const total = counts.ok + counts.finding + counts.unknown;
@@ -766,6 +783,7 @@
 
       clear(body);
       body.appendChild(postureBanner(summary, alertList.alerts || [], gaps.length, devices.devices));
+      body.appendChild(coverageHead(net, hs, is));
       body.appendChild(rings);
       body.appendChild(tiles);
       // Recent activity: what the network and the host did in the last day,

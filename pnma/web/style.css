@@ -1377,6 +1377,12 @@ section[data-tab].is-active { display: block; animation: pnma-panel-in 200ms cub
 
 /* ---- overview: rings, tiles, gaps --------------------------------------- */
 
+.coverage__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2) var(--s3); flex-wrap: wrap; margin-bottom: var(--s2); }
+.coverage__title { font-family: var(--font); font-size: 14px; font-weight: 700; }
+.coverage__score { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.coverage__pct { font-family: var(--display); font-size: 26px; font-weight: 700; letter-spacing: -0.01em; line-height: 1; font-variation-settings: 'opsz' 40; }
+.coverage__lbl { color: var(--fg-muted); font-size: 12px; }
+.coverage__back { color: var(--fg-dim); font-size: 12px; }
 .rings { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--s3); margin-bottom: var(--s3); }
 .ringcard {
   background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius);
