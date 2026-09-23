@@ -69,3 +69,14 @@ def test_new_destination_allowlist_matches_exact_basename_only():
     _endpoint(db, "maps.exe", "45.60.71.82", 443, [now - 120], path="C:/Users/Public/maps.exe")
     f = NewExternalDestinationDetection().evaluate(DetectionContext(db=db, now=now))
     assert len(f) == 1 and f[0].evidence["process"] == "maps.exe"
+
+
+def test_new_destination_allowlists_trusted_vendor_prefixes():
+    db = _db(); now = time.time()
+    # Vendor families that fan out into many exe names (iCloud, Copilot, Defender).
+    for p in ("iclouddrive.exe", "icloudckks.exe", "m365copilot.exe", "mpdefendercoreservice.exe"):
+        _endpoint(db, p, "17.253.1.1", 443, [now - 120], path="C:/Program Files/Vendor/" + p)
+    # But a prefix ridden in from Downloads is not trusted.
+    _endpoint(db, "icloudevil.exe", "45.60.71.82", 443, [now - 90], path="C:/Users/me/Downloads/icloudevil.exe")
+    f = NewExternalDestinationDetection().evaluate(DetectionContext(db=db, now=now))
+    assert [x.evidence["process"] for x in f] == ["icloudevil.exe"]

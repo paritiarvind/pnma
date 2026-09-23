@@ -46,6 +46,16 @@ _KNOWN_PERIODIC_NAMES = {
     "msmpeng", "mssense", "nissrv", "securityhealthservice", "smartscreen",
 }
 
+# Trusted vendor families whose components multiply into many executable names
+# (icloud*, *copilot, mpdefender*). Prefix-matched to avoid whack-a-mole; the
+# throwaway-path guard below still applies, so a spoof cannot ride a prefix in
+# from Downloads.
+_KNOWN_PERIODIC_PREFIXES = (
+    "icloud", "copilot", "mscopilot", "m365copilot", "tailscale",
+    "mpdefender", "microsoftedge", "msedge", "microsoftstart", "hpprinter",
+    "googleupdate", "onedrive",
+)
+
 # A trusted name running from a throwaway location is exactly the spoof this
 # rule exists to catch, so it is NOT allowlisted.
 _SUSPICIOUS_PATH = re.compile(
@@ -59,7 +69,9 @@ def _exe_name(process: str | None, path: str | None) -> str:
 
 
 def _is_known_good(process: str | None, path: str | None) -> bool:
-    if _exe_name(process, path) not in _KNOWN_PERIODIC_NAMES:
+    name = _exe_name(process, path)
+    known = name in _KNOWN_PERIODIC_NAMES or any(name.startswith(p) for p in _KNOWN_PERIODIC_PREFIXES)
+    if not known:
         return False
     if path and _SUSPICIOUS_PATH.search(path):
         return False   # trusted name, untrusted path -> still worth a look
