@@ -340,3 +340,26 @@ def test_scheduled_task_and_driver_rules_make_findings():
     assert len(rules.ScheduledTaskAddedDetection().evaluate(ctx)) == 1
     f = rules.KernelDriverAddedDetection().evaluate(ctx)
     assert len(f) == 1 and "mimidrv" in f[0].title
+
+
+# ------------------------------------------------------- credential dump
+
+def test_cred_dump_artifacts_alert_high(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "hits": [
+        {"name": "sam", "path": "C:/Windows/Temp/sam", "kind": "hive"},
+        {"name": "lsass.dmp", "path": "C:/Users/Public/lsass.dmp", "kind": "lsass_dump"}]}, ""))
+    n, err = c.collect_cred_dumps()
+    assert n == 2
+    ev = _events(db, "credential_hive_dump")
+    assert len(ev) == 2 and all(r["severity"] == "high" for r in ev)
+
+
+def test_cred_dump_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="credential_hive_dump", ts=time.time() - 60,
+                         summary="credential-dump artifact (registry hive): C:/Windows/Temp/sam",
+                         detail={"name": "sam", "path": "C:/Windows/Temp/sam", "artifact": "registry hive"},
+                         severity="high", dedup_key="creddump:x", mitre_id="T1003.002", sensor_id="host")
+    f = rules.CredentialDumpArtifactDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "temp" in f[0].title.lower()
