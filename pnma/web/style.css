@@ -353,10 +353,20 @@ code, .mono {
     min-width: 0;
   }
   .page {
-    margin: 0;
-    max-width: none;
+    /* A dashboard on a wide or curved monitor reads best as a centred content
+     * band, not content stretched edge to edge: a laptop (<=1920) still fills
+     * the space, while an ultrawide gets even gutters and comfortable line
+     * lengths instead of a sparse, over-stretched grid. */
+    margin: 0 auto;
+    max-width: 1840px;
     padding: var(--s4) var(--s5);
   }
+}
+
+/* On a genuinely large or curved display, widen the gutters so the extra
+ * width reads as a composed dashboard rather than sparse whitespace. */
+@media (min-width: 1900px) {
+  .page { padding-left: 72px; padding-right: 72px; }
 }
 
 .section {
