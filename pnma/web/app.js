@@ -909,7 +909,7 @@ function storyRows(sorted, onOpen) {
         ]),
         el('span', { class: 'story__chev', text: '\u203a' }),
       ]),
-      el('div', { class: 'story__rows' }, run.map((x) => alertRow(x, onOpen, subj))),
+      el('div', { class: 'story__rows' }, rollupRows(run, onOpen, subj)),
     ]));
   }
   return out;
@@ -943,22 +943,44 @@ const RULE_STORY = {
   collector_heartbeat: 'The collector stopped reporting',
 };
 
-function alertRow(alert, onOpen, subj) {
+/* Within a device story, collapse alerts that share a rule+title (three
+ * "PowerShell block matched: encoded_command" become one row with x3). Each
+ * group keeps its worst severity and newest timestamp, and opens the newest
+ * alert -- the individuals differ only in evidence, reachable from there. */
+function rollupRows(run, onOpen, subj) {
+  const groups = new Map();
+  const order = [];
+  for (const a of run) {
+    const key = (a.rule_id || '') + '|' + (a.title || '');
+    if (!groups.has(key)) { groups.set(key, []); order.push(key); }
+    groups.get(key).push(a);
+  }
+  return order.map((key) => {
+    const g = groups.get(key);
+    const newest = g.slice().sort((x, y) => (y.last_seen || 0) - (x.last_seen || 0))[0];
+    return alertRow(newest, onOpen, subj, g.length);
+  });
+}
+
+function alertRow(alert, onOpen, subj, groupCount) {
   const sev = SEVERITIES[alert.severity] ? alert.severity : 'low';
   const folded = foldedRules(alert);
   const device = alert.device_id && !(subj && subj.kind === 'device') ? deviceLabelFor(alert.device_id) : null;
+  const dupes = (groupCount || 1) > 1;
   const row = el('button', {
     class: 'alertrow alertrow--' + sev + (alert.status !== 'open' ? ' alertrow--' + alert.status : ''),
     type: 'button', 'data-anchor': 'alert:' + alert.id, 'data-status': alert.status, 'data-severity': sev, 'data-mitre': alert.mitre_id || '',
   }, [
     severityChip(sev, alert.severity_raw),
     el('span', { class: 'alertrow__main' }, [
-      el('span', { class: 'alertrow__title', text: alert.title || alert.rule_id }),
+      el('span', { class: 'alertrow__title' }, [
+        alert.title || alert.rule_id,
+        dupes ? el('span', { class: 'alertrow__dupes', text: '\u00d7' + groupCount }) : null,
+      ]),
       el('span', { class: 'alertrow__meta' }, [
         device ? el('span', { text: device }) : null,
         el('span', { text: RULE_STORY[alert.rule_id] || (alert.rule_id || '').replace(/_/g, ' ') }),
         folded.length ? el('span', { text: '+' + folded.length + ' ' + plural(folded.length, 'rule') }) : null,
-        alert.count > 1 ? el('span', { text: 'seen x' + alert.count }) : null,
       ]),
     ]),
     el('span', { class: 'alertrow__side' }, [

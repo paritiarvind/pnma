@@ -1683,7 +1683,7 @@ button.ringcard:focus-visible, button.tile:focus-visible, .alertrow:focus-visibl
 .alertrow--acknowledged { opacity: 0.8; }
 .alertrow--resolved { opacity: 0.5; }
 .alertrow--resolved:hover, .alertrow--acknowledged:hover { opacity: 1; }
-.alertrow__main { display: grid; gap: 2px; min-width: 0; }
+.alertrow__main { display: grid; gap: 1px; min-width: 0; }
 .alertrow__title { font-weight: 600; font-size: 14px; color: var(--fg); overflow-wrap: anywhere; }
 .alertrow--acknowledged .alertrow__title, .alertrow--resolved .alertrow__title { color: var(--fg-muted); font-weight: 500; }
 .alertrow__meta { display: flex; flex-wrap: wrap; gap: var(--s2); font-size: 11px; color: var(--fg-dim); }
@@ -1943,7 +1943,7 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .btn--primary:hover, .pb__all:hover { filter: brightness(1.08); }
 .tabs__tab.is-active { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .sev-chip { font-family: var(--font); font-weight: 700; }
-.alertrow { padding: 8px 12px; }
+.alertrow { padding: 6px 12px; gap: 4px 12px; animation: none; }
 .alertrow__title { font-weight: 600; }
 @media (prefers-reduced-motion: no-preference) {
   /* One page-load reveal: the sections rise once, in order. Nothing else moves on its own. */
@@ -1976,3 +1976,5 @@ button.matrix__cell:focus-visible { outline: none; box-shadow: var(--shadow-focu
 .hbar__fill--mine { background: var(--lamp); }
 .devdot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-dim); flex: none; }
 .devdot--on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+
+.alertrow__dupes { margin-left: 8px; font-family: var(--font); font-weight: 700; font-size: 12px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 999px; padding: 0 7px; vertical-align: 1px; }
