@@ -984,6 +984,7 @@ def host_event_rules() -> list[Detection]:
         DnsServerChangedDetection(),
         LocalAdminGroupDiffDetection(),
         ShadowCopyDeletionDetection(),
+        UsbStorageDetection(),
         ScheduledTaskAddedDetection(),
         KernelDriverAddedDetection(),
         CredentialDumpArtifactDetection(),
