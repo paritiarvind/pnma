@@ -60,6 +60,7 @@ EVENT_KINDS = (
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
     "powershell_downgrade", "firewall_rule_added", "lateral_connection",
     "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed", "scheduled_task_added", "kernel_driver_added", "credential_hive_dump", "shadow_copies_deleted",
+    "usb_storage_added",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -397,6 +398,7 @@ class HostEventCollector:
             ("kernel_drivers", self.collect_kernel_drivers),
             ("cred_dumps", self.collect_cred_dumps),
             ("shadow_copies", self.collect_shadow_copies),
+            ("usb_storage", self.collect_usb_storage),
         ):
             try:
                 n, unknown = fn()
@@ -1600,4 +1602,60 @@ try {
             title="Volume shadow copies (restore points)",
             state="ok", value=f"{count} shadow " + ("copy" if count == 1 else "copies"),
             expected="a sudden drop of a non-empty set to zero is the ransomware signature", reason=None)
+        return n, ""
+
+
+    # -- USB mass storage first-seen (T1091 Replication / T1052 Exfil) --------
+
+    _USB_PS = r"""
+param()
+$out = @()
+$base = 'HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR'
+if (Test-Path $base) {
+  Get-ChildItem $base -ErrorAction SilentlyContinue | ForEach-Object {
+    $model = $_.PSChildName
+    Get-ChildItem $_.PSPath -ErrorAction SilentlyContinue | ForEach-Object {
+      $fn = ''
+      try { $fn = [string](Get-ItemProperty -Path $_.PSPath -Name FriendlyName -ErrorAction Stop).FriendlyName } catch {}
+      $out += [pscustomobject]@{ id = [string]$_.PSChildName; model = [string]$model; name = $fn }
+    }
+  }
+}
+[pscustomobject]@{ ok = $true; devices = $out } | ConvertTo-Json -Compress -Depth 4
+"""
+
+    def collect_usb_storage(self) -> tuple[int, str]:
+        """A USB mass-storage device connected for the first time. Removable
+        media is how infections cross an air gap and how data walks out. Read
+        from the USBSTOR enumeration (a durable record of every USB storage
+        device ever attached, so a drive plugged in only briefly is still
+        caught). Snapshot-diff; alert low on a new device serial."""
+        ok, res, err = _ps_marked(self._USB_PS, timeout=45)
+        if not ok or not (res or {}).get("ok"):
+            return 0, ""
+        devices = res.get("devices") or []
+        if isinstance(devices, dict):
+            devices = [devices]
+        current = {d.get("id"): d for d in devices if d.get("id")}
+        now = time.time()
+        prev_raw = self._meta("host_usbstor_baseline")
+        n = 0
+        if prev_raw is not None:
+            prev = set(json.loads(prev_raw))
+            for did, d in current.items():
+                if did in prev:
+                    continue
+                label = (d.get("name") or d.get("model") or did).replace("_", " ").strip()
+                if self._emit(
+                        kind="usb_storage_added", ts=now,
+                        summary=f"USB storage connected for the first time: {label[:80]}",
+                        detail={"id": did, "model": d.get("model"), "name": d.get("name")},
+                        severity="low", dedup_key=f"usb:{did}", mitre_id="T1091"):
+                    n += 1
+        self._set_meta("host_usbstor_baseline", json.dumps(sorted(current)))
+        self.db.record_host_fact(
+            fact_key="integrity.usb_storage", category="integrity",
+            title="USB storage devices seen",
+            state="ok", value=f"{len(current)} " + ("device" if len(current) == 1 else "devices") + " ever attached",
+            expected="only drives you have used", reason=None)
         return n, ""

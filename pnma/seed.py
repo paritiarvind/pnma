@@ -346,6 +346,8 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
          "high", "T1053.005"),
         ("kernel_driver_added", t + 300, "new kernel driver: mimidrv (C:\\Users\\Public\\mimidrv.sys)",
          {"name": "mimidrv", "path": "C:\\Users\\Public\\mimidrv.sys", "unusual_path": True}, "high", "T1543.003"),
+        ("usb_storage_added", t + 318, "USB storage connected for the first time: SanDisk Cruzer USB Device",
+         {"id": "4C530001120830105155", "model": "SanDisk_Cruzer", "name": "SanDisk Cruzer USB Device"}, "low", "T1091"),
         ("shadow_copies_deleted", t + 315, "all 5 volume shadow copies were deleted",
          {"previous_count": 5, "current_count": 0}, "high", "T1490"),
         ("credential_hive_dump", t + 310, "credential-dump artifact (registry hive): C:\\Windows\\Temp\\sam",

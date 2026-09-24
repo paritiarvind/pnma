@@ -929,6 +929,40 @@ class ShadowCopyDeletionDetection(_HostEventRule):
         )
 
 
+class UsbStorageDetection(_HostEventRule):
+    rule_id = "usb_storage_added"
+    name = "New USB storage device"
+    severity = "low"
+    kind = "usb_storage_added"
+    mitre_id = "T1091"
+    mitre_name = "Replication Through Removable Media"
+    requires = "the USBSTOR device enumeration (a durable record of USB mass-storage ever attached), diffed against the host's own baseline"
+    blind_spots = (
+        "USB MASS STORAGE only -- a phone or camera mounting as MTP/WPD is not here, nor is a "
+        "malicious USB device pretending to be a keyboard (a 'rubber ducky'). It reads the durable "
+        "enumeration, so a drive plugged in only briefly is still caught, but it reports that a "
+        "device was attached, not what was copied to or from it."
+    )
+
+    def describe(self, row, d):
+        return (
+            f"New USB storage device: {(d.get('name') or d.get('model') or '?').replace('_', ' ')[:60]}",
+            f"{row['summary']}\n\n"
+            f"  Device  {(d.get('name') or '-').replace('_', ' ')}\n"
+            f"  Model   {(d.get('model') or '-').replace('_', ' ')}\n\n"
+            "WHY THIS MATTERS: removable media is how an infection crosses from another machine onto "
+            "this one, and how data walks out of a house that has no other exfat path. Knowing which "
+            "drives have touched this machine is basic hygiene.\n\n"
+            "BENIGN EXPLANATION: you plugged in your own USB stick, an external drive, or a phone in "
+            "file-transfer mode -- by far the common case.\n\n"
+            "MALICIOUS EXPLANATION: a drive you do not recognise was connected, or one appeared while "
+            "you were away from the machine.\n\n"
+            "NEXT STEP: if it is yours, nothing to do -- mark this resolved. If not, scan it before "
+            "opening anything (`Start-MpScan -ScanType CustomScan -ScanPath <drive>:`), and be wary "
+            "of running anything from it."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),

@@ -399,3 +399,28 @@ def test_shadow_copy_rule_makes_a_finding():
                          detail={"previous_count": 3, "current_count": 0}, severity="high", dedup_key="s", mitre_id="T1490", sensor_id="host")
     f = rules.ShadowCopyDeletionDetection().evaluate(DetectionContext(db=db, now=time.time()))
     assert len(f) == 1 and "shadow" in f[0].title.lower()
+
+
+def test_usb_storage_first_seen_alerts_low(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "devices": [
+        {"id": "AAA", "model": "Kingston", "name": "Kingston DT USB Device"}]}, ""))
+    assert c.collect_usb_storage() == (0, "")               # baseline
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "devices": [
+        {"id": "AAA", "model": "Kingston", "name": "Kingston DT USB Device"},
+        {"id": "BBB", "model": "SanDisk_Cruzer", "name": "SanDisk Cruzer USB Device"}]}, ""))
+    n, err = c.collect_usb_storage()
+    assert n == 1
+    ev = _events(db, "usb_storage_added")
+    assert len(ev) == 1 and ev[0]["severity"] == "low"
+    assert json.loads(ev[0]["detail"])["id"] == "BBB"
+
+
+def test_usb_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="usb_storage_added", ts=time.time() - 60,
+                         summary="USB storage connected for the first time: SanDisk Cruzer",
+                         detail={"id": "BBB", "model": "SanDisk_Cruzer", "name": "SanDisk Cruzer USB Device"},
+                         severity="low", dedup_key="usb:BBB", mitre_id="T1091", sensor_id="host")
+    f = rules.UsbStorageDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "USB storage" in f[0].title
