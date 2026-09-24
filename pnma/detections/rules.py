@@ -16,6 +16,7 @@ from ..oui import describe as describe_vendor
 from ..oui import is_iot_vendor
 from .. import vulns
 from ..collectors.confirm import confirmed_banners
+from .router_rules import router_rules
 from .base import Detection, DetectionContext, Finding, downgrade, upgrade
 from .host_event_rules import host_event_rules
 from .auth_rules import auth_rules
@@ -727,4 +728,4 @@ def default_rules() -> list[Detection]:
         ProfileDeviationDetection(),
         AvailabilityDetection(),
         CVEExposureDetection(),
-    ] + host_rules() + identity_rules() + host_event_rules() + sec555_rules() + auth_rules() + network_rules()
+    ] + host_rules() + identity_rules() + host_event_rules() + sec555_rules() + auth_rules() + network_rules() + router_rules()

@@ -410,6 +410,17 @@ def _seed_host_events(db: Database, now: float, created: list[dict]) -> int:
                          source_ip=None, logon_type=None, status=None,
                          detail={'TargetUserName': 'guest', 'SubjectUserName': 'svc_helper'},
                          dedup_key='seed:acctreset')
+    # Router syslog events (the router forwards syslog to the mailbox) so the
+    # router_event rule fires on the demo.
+    db.record_router_event(ts=now - 200, kind='config_change', severity='medium',
+                           title='Router configuration or firmware changed', ip=None, mac=None,
+                           line='config: port forwarding rule added tcp/3389 -> 10.20.30.109', dedup_key='seed:router:cfg')
+    db.record_router_event(ts=now - 400, kind='admin_login', severity='medium',
+                           title='Admin login to the router', ip='45.13.7.22', mac=None,
+                           line='httpd: LOGIN admin from 45.13.7.22', dedup_key='seed:router:login')
+    db.record_router_event(ts=now - 600, kind='firewall_event', severity='high',
+                           title='Router firewall flagged an attack', ip='185.220.101.47', mac=None,
+                           line='firewall: DoS SYN flood from 185.220.101.47 blocked', dedup_key='seed:router:fw')
     # Connection endpoints: a regular beacon (low-jitter, ~10 min) and a
     # brand-new external destination for a non-browser process, so the
     # beaconing and new_external_destination rules fire on the demo.
