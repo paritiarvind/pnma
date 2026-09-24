@@ -157,6 +157,11 @@ PNMA_OWN = re.compile(r"start-pnma\.ps1|pnma", re.I)
 # `cmd.exe /q /c del /q "C:\\Program Files\\..."`: the RunOnce an installer
 # leaves to remove its own cached setup binary (OneDrive does this on every
 # update). cmd.exe deleting one file under Program Files is not a script host.
+# Signed vendor code, Windows components and Store apps live here; a change to
+# an autorun or a new service under these paths is an app updating or installing
+# itself, not persistence an intruder planted.
+TRUSTED_PATH = re.compile(r"[\\/](program files( \(x86\))?|windows|windowsapps)[\\/]", re.I)
+
 _CLEANUP_RUNONCE = re.compile(
     r'^"?[A-Za-z]:\\windows\\system32\\cmd\.exe"?\s+/q\s+/c\s+del\s+/q\s+"?[A-Za-z]:\\program files',
     re.I)
@@ -169,7 +174,7 @@ def classify_autorun(entry: dict) -> list[str]:
         # PNMA's own Startup shortcut launches powershell; attributing it is
         # the same honesty as the passive collector ignoring its own probes.
         return ["pnma_own"]
-    if _CLEANUP_RUNONCE.search(command) and "runonce" in (entry.get("where") or "").lower():
+    if _CLEANUP_RUNONCE.search(command):
         return ["installer_cleanup"]
     if SCRIPT_HOST.search(command):
         tags.append("script_host")
@@ -605,13 +610,23 @@ foreach ($o in $out) {
             elif aid in prev and prev[aid].get("sha256") and e["sha256"] and prev[aid]["sha256"] != e["sha256"]:
                 if self._emit(kind="autorun_added", ts=now,
                               summary=f"autorun binary changed on disk: {e['name']} ({e['exe']})",
-                              detail={**e, "previous_sha256": prev[aid]["sha256"]}, severity="medium",
+                              detail={**e, "previous_sha256": prev[aid]["sha256"]},
+                              # A signed binary in a trusted install path changing
+                              # hash is the app updating itself (OneDrive), not tampering.
+                              severity=None if (e.get("signed") and TRUSTED_PATH.search(e.get("exe") or "")) else "medium",
                               dedup_key=f"autorun_hash:{aid}:{e['sha256'][:12]}", mitre_id="T1547.001"):
                     n += 1
             elif aid in prev and prev[aid]["command"] != e["command"]:
+                # A change that stays inside a trusted install path and trips no
+                # risk tag is a version bump, not persistence.
+                cmd_sev = autorun_severity(e["tags"])
+                if cmd_sev is None and TRUSTED_PATH.search(e["command"] or ""):
+                    cmd_sev = None
+                else:
+                    cmd_sev = cmd_sev or "low"
                 if self._emit(kind="autorun_added", ts=now,
                               summary=f"autorun changed: {e['name']} -> {e['command'][:120]}",
-                              detail={**e, "previous": prev[aid]["command"]}, severity=autorun_severity(e["tags"]) or "low",
+                              detail={**e, "previous": prev[aid]["command"]}, severity=cmd_sev,
                               dedup_key=f"autorun:{aid}:{int(now)}", mitre_id="T1547.001"):
                     n += 1
         for aid, p in prev.items():
@@ -736,7 +751,7 @@ $res | ConvertTo-Json -Compress -Depth 4
                     tags.append("script_host")
                 if REMOTE_ACCESS.search(name + " " + path):
                     tags.append("remote_access")
-                sev = "high" if tags else "low"
+                sev = "high" if tags else ("low" if not TRUSTED_PATH.search(path or "") else None)
                 sha = _sha256_of(path)
                 self._emit(kind="service_installed", ts=ts,
                            summary=f"service installed: {name} -> {path[:120]}",
@@ -849,7 +864,7 @@ $res | ConvertTo-Json -Compress -Depth 4
 
     _HIDDEN_PS = r"""
 $roots = @($env:USERPROFILE, $env:APPDATA, $env:LOCALAPPDATA, $env:ProgramData, $env:TEMP, $env:PUBLIC, $env:SystemDrive + '\', $env:USERPROFILE + '\Downloads', $env:USERPROFILE + '\Desktop', $env:USERPROFILE + '\Documents') | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-$skip = 'AppData|\$Recycle\.Bin|System Volume Information|\\\.git$|\\Application Data$|\\Local Settings$|\\Cookies$|\\Recent$|\\SendTo$|\\Templates$|\\NetHood$|\\PrintHood$|\\Start Menu$|\\My Documents$|\\Documents and Settings$|Recovery$|PerfLogs$|\\\.cache$|\\\.vscode|\\\.claude|\\\.nuget|\\\.npm|\\\.ssh$|\\\.gradle|\\\.m2$|\\\.docker|\\\.android|\\\.cargo|\\\.rustup|\\\.conda|\\\.matplotlib|\\\.jupyter|\\\.ipython|\\\.dotnet|\\\.config$|\\\.local$|\\\.pnpm|\\\.yarn|\\\.bun|\\\.cursor|\\\.continue|\\\.ollama|\\\.tailscale|\\\.wdm|Packages$|Microsoft$|Temporary Internet Files$|\\WindowsApps$|\\Package Cache$|\\Config\.Msi$'
+$skip = 'AppData|\$Recycle\.Bin|System Volume Information|\\\.git$|\\Application Data$|\\Local Settings$|\\Cookies$|\\Recent$|\\SendTo$|\\Templates$|\\NetHood$|\\PrintHood$|\\Start Menu$|\\My Documents$|\\Documents and Settings$|Recovery$|PerfLogs$|\\\.cache$|\\\.vscode|\\\.claude|\\\.nuget|\\\.npm|\\\.ssh$|\\\.gradle|\\\.m2$|\\\.docker|\\\.android|\\\.cargo|\\\.rustup|\\\.conda|\\\.matplotlib|\\\.jupyter|\\\.ipython|\\\.dotnet|\\\.config$|\\\.local$|\\\.pnpm|\\\.yarn|\\\.bun|\\\.cursor|\\\.continue|\\\.ollama|\\\.tailscale|\\\.wdm|Packages$|Microsoft$|Temporary Internet Files$|\\WindowsApps$|\\Package Cache$|\\Config\.Msi$|\\Intel\\|\\NVIDIA\\|\\AMD\\'
 $since = (Get-Date).AddSeconds(-%(window)s)
 $out = foreach ($r in $roots) {
   Get-ChildItem -LiteralPath $r -Directory -Force -Depth 1 -ErrorAction SilentlyContinue | Where-Object {
@@ -1268,13 +1283,20 @@ $res | ConvertTo-Json -Compress -Depth 5
             path = d.get("Path") or d.get("Process Name") or ""
             sev_name = (d.get("Severity Name") or "").lower()
             sev = "high" if sev_name in ("severe", "high", "critical") else "medium"
+            # AMSI scans command lines, not just files. When the "path" is a
+            # CmdLine belonging to this agent's own shell (searching the code
+            # for a malware name, say), Defender flags the string, not a real
+            # threat -- attribute it like PNMA's own PowerShell, don't alert.
+            lp = path.lower()
+            agent = "cmdline:" in lp and (".claude" in lp or "shell-snapshot" in lp)
             if self._emit(
                     kind="defender_threat", ts=float(e.get("t") or time.time()),
-                    summary=f"Defender: {threat} ({action})" + (f" -- {path[-60:]}" if path else ""),
+                    summary=("agent tooling flagged by AMSI: " if agent else "Defender: ") + f"{threat} ({action})" + (f" -- {path[-60:]}" if path else ""),
                     detail={"threat": threat, "action": action, "path": path,
                             "severity_name": d.get("Severity Name"), "user": d.get("Detection User"),
                             "record": e.get("record"), "event_id": e.get("id")},
-                    severity=sev, dedup_key=f"defender:{e.get('record')}", mitre_id="T1204"):
+                    severity=None if agent else sev, agent_generated=agent,
+                    dedup_key=f"defender:{e.get('record')}", mitre_id="T1204"):
                 n += 1
         mx = res.get("max")
         if mx:
@@ -1445,7 +1467,7 @@ try {
 } catch { [pscustomobject]@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress }
 """
 
-    _DRIVER_TRUSTED_PATH = re.compile(r"[\/](system32|syswow64|driverstore|windows)[\/]", re.I)
+    _DRIVER_TRUSTED_PATH = re.compile(r"[\\/](system32|syswow64|driverstore|windows)[\\/]", re.I)
 
     def collect_kernel_drivers(self) -> tuple[int, str]:
         """A newly-loaded kernel driver can be a rootkit or a vulnerable driver

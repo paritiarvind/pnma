@@ -519,6 +519,11 @@ class ProfileDeviationDetection(Detection):
         for row in rows:
             if row['device_id'] in ctx.self_device_ids:
                 continue
+            # Ports in the dynamic/ephemeral range (49152-65535) are where
+            # UPnP/DLNA/SSDP and transient services live; a device merely
+            # "offering" one is not a meaningful class deviation on a home LAN.
+            if row["port"] >= 49152:
+                continue
             try:
                 cls = DeviceClass(row["device_class"])
             except ValueError:

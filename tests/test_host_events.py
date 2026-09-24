@@ -200,7 +200,7 @@ def test_first_run_is_inventory_only_then_diffs(fake):
 
 def test_autorun_hash_change_is_an_event_and_pnma_is_attributed(fake):
     db = _db(); c = he.HostEventCollector(db)
-    base = {"where": "HKCU:\\...\\Run", "name": "App", "command": '"C:\\Program Files\\App\\app.exe"', "signed": True, "exe": "C:\\Program Files\\App\\app.exe", "sha256": "aaa"}
+    base = {"where": "HKCU:\\...\\Run", "name": "App", "command": '"C:\\Users\\me\\AppData\\Local\\App\\app.exe"', "signed": False, "exe": "C:\\Users\\me\\AppData\\Local\\App\\app.exe", "sha256": "aaa"}
     own = {"where": "Startup", "name": "PNMA.lnk", "command": '"C:\\W\\powershell.exe" -File start-pnma.ps1', "signed": True, "exe": None, "sha256": None}
     fake.autoruns = [base, own]
     c.run_once()
@@ -372,3 +372,24 @@ def test_network_rules_skip_the_monitoring_host():
         assert "self" not in ids, rule.rule_id
     # the peer is still assessed -- exclusion is the host only, not a blanket mute
     assert "peer" in {f.device_id for f in CVEExposureDetection().evaluate(ctx)}
+
+
+def test_signed_trusted_path_changes_are_not_findings(fake):
+    """OneDrive-style: a signed binary in Program Files updating itself, and a
+    Windows update-cleanup cmd del, must not raise -- the live FP cluster."""
+    db = _db(); c = he.HostEventCollector(db)
+    od = {"where": r"HKCU:\...\Run", "name": "OneDrive",
+          "command": r'"C:\Program Files\Microsoft OneDrive\OneDrive.exe" /background',
+          "signed": True, "exe": r"C:\Program Files\Microsoft OneDrive\OneDrive.exe", "sha256": "aaa"}
+    fake.autoruns = [od]
+    c.run_once()                                              # baseline
+    # OneDrive updates itself (hash changes) and a Windows cleanup task appears.
+    cleanup = {"where": r"HKLM:\SOFTWARE\...\Run", "name": "Delete Cached Update Binary",
+               "command": r'C:\WINDOWS\system32\cmd.exe /q /c del /q "C:\Program Files\Microsoft OneDrive\Update\OneDriveSetup.exe"',
+               "signed": None, "exe": None, "sha256": None}
+    fake.autoruns = [dict(od, sha256="bbb"), cleanup]
+    c.run_once()
+    # Neither is an alert: the hash change is a signed self-update, the cleanup
+    # is an installer del. Any autorun_added events are severity NULL.
+    alerted = db.query("SELECT summary FROM host_events WHERE kind='autorun_added' AND severity IS NOT NULL")
+    assert alerted == [], [r["summary"] for r in alerted]

@@ -29,6 +29,7 @@ _KNOWN_PERIODIC_NAMES = {
     "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "iexplore", "safari",
     # Windows components
     "svchost", "backgroundtaskhost", "searchapp", "widgetservice", "searchindexer",
+    "taskhostw", "runtimebroker", "wwahost", "dllhost", "ctfmon", "sihost", "settingsynchost",
     # cloud sync
     "onedrive", "dropbox", "googledrivefs", "googledrive", "box",
     # messaging / media
@@ -212,6 +213,8 @@ class NewExternalDestinationDetection(Detection):
             "WHERE first_seen >= ?", (ctx.now - self.RECENT_S,))
         out = []
         for r in rows:
+            if (r["process"] or "").strip() in ("", "?"):
+                continue    # a connection whose process had already exited -- nothing to attribute
             if _is_known_good(r["process"], r["path"]):
                 continue
             if not _is_public(r["raddr"] or ""):
