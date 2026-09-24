@@ -1442,13 +1442,23 @@ try {
             for path, t in current.items():
                 if path in prev:
                     continue
-                action = t.get("action") or ""
+                action = (t.get("action") or "").strip()
                 risky = bool(SCRIPT_HOST.search(action)) or bool(USER_WRITABLE.search(action))
+                # A task with no runnable action (Windows internal COM/trigger
+                # tasks like SoftLanding) or one whose action is a signed binary
+                # in a trusted install path is Windows/vendor housekeeping, not
+                # a persistence a human planted -- record it, do not alert.
+                if risky:
+                    tsev = "high"
+                elif not action or TRUSTED_PATH.search(action):
+                    tsev = None
+                else:
+                    tsev = "low"
                 if self._emit(
                         kind="scheduled_task_added", ts=now,
                         summary=f"scheduled task added: {path} -> {action[:100]}",
                         detail={"path": path, "author": t.get("author"), "action": action, "lolbin_or_userpath": risky},
-                        severity="high" if risky else "low",
+                        severity=tsev,
                         dedup_key=f"schtask:{path}", mitre_id="T1053.005"):
                     n += 1
         self._set_meta("host_schtask_baseline", json.dumps(sorted(current)))

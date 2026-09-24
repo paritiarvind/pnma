@@ -56,8 +56,8 @@ _KNOWN_PERIODIC_NAMES = {
 # from Downloads.
 _KNOWN_PERIODIC_PREFIXES = (
     "icloud", "copilot", "mscopilot", "m365copilot", "tailscale",
-    "mpdefender", "microsoftedge", "msedge", "microsoftstart", "hpprinter",
-    "googleupdate", "onedrive",
+    "mpdefender", "microsoftedge", "msedge", "microsoftstart", "hpprint",
+    "googleupdate", "onedrive", "adobearm", "adobegcclient", "dropbox",
 )
 
 # A trusted name running from a throwaway location is exactly the spoof this

@@ -221,7 +221,11 @@ class UnmeasuredControlDetection(Detection):
 
         return [
             Finding(
-                dedup_key=f"unmeasured:{len(rows)}:{','.join(sorted(r['fact_key'] for r in rows))}",
+                # Stable key: one standing "unmeasured" alert whose count and
+                # listing REFRESH as the set changes, not a new alert each time
+                # a control moves in or out of the unknown set (that was the
+                # churn -- '3 unmeasured', then '4', then '1', all left open).
+                dedup_key="unmeasured:host",
                 severity="low",
                 title=f"{len(rows)} host controls unmeasured",
                 description=(

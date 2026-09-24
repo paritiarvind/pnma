@@ -363,3 +363,18 @@ def test_cred_dump_rule_makes_a_finding():
                          severity="high", dedup_key="creddump:x", mitre_id="T1003.002", sensor_id="host")
     f = rules.CredentialDumpArtifactDetection().evaluate(DetectionContext(db=db, now=time.time()))
     assert len(f) == 1 and "temp" in f[0].title.lower()
+
+
+def test_scheduled_task_empty_or_trusted_action_is_not_a_finding(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "tasks": [
+        {"path": "REPLBASE", "author": "MS", "action": "C:/Program Files/App/app.exe"}]}, ""))
+    assert c.collect_scheduled_tasks() == (0, "")            # baseline
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "tasks": [
+        {"path": "REPLBASE", "author": "MS", "action": "C:/Program Files/App/app.exe"},
+        {"path": "SoftLanding/Trigger", "author": None, "action": ""},                 # Windows internal, empty action -> no alert
+        {"path": "Vendor/Upd", "author": None, "action": "C:/Program Files/Vendor/upd.exe"},  # trusted path -> no alert
+        {"path": "Evil", "author": None, "action": "powershell -enc AAAA"}]}, ""))         # LOLBin -> high
+    c.collect_scheduled_tasks()
+    alerted = db.query("SELECT detail FROM host_events WHERE kind='scheduled_task_added' AND severity IS NOT NULL")
+    assert len(alerted) == 1 and json.loads(alerted[0]["detail"])["path"] == "Evil"
