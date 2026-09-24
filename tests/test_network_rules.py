@@ -11,7 +11,7 @@ def _db():
     return Database(Path(tempfile.mkdtemp()) / "t.db")
 
 
-def _endpoint(db, process, raddr, rport, samples, path="C:/Program Files/App/x.exe"):
+def _endpoint(db, process, raddr, rport, samples, path="C:/Data/App/x.exe"):
     db.execute("INSERT INTO connection_endpoints(process, path, raddr, rport, first_seen, last_seen, sample_count, samples) "
                "VALUES(?,?,?,?,?,?,?,?)", (process, path, raddr, rport, samples[0], samples[-1], len(samples), json.dumps(samples)))
 
@@ -80,3 +80,14 @@ def test_new_destination_allowlists_trusted_vendor_prefixes():
     _endpoint(db, "icloudevil.exe", "45.60.71.82", 443, [now - 90], path="C:/Users/me/Downloads/icloudevil.exe")
     f = NewExternalDestinationDetection().evaluate(DetectionContext(db=db, now=now))
     assert [x.evidence["process"] for x in f] == ["icloudevil.exe"]
+
+
+def test_new_destination_skips_trusted_install_path_but_not_userwritable():
+    db = _db(); now = time.time()
+    # signed vendor binaries in trusted install paths -> not first-contact noise
+    _endpoint(db, "sdxhelper.exe", "20.42.0.1", 443, [now - 60], path="C:/Program Files/Microsoft Office/root/Office16/SDXHelper.exe")
+    _endpoint(db, "taskhostw.exe", "20.42.0.2", 443, [now - 55], path="C:/Windows/System32/taskhostw.exe")
+    # a binary in a user-writable path reaching out -> still flagged
+    _endpoint(db, "rat.exe", "45.60.71.82", 443, [now - 50], path="C:/Users/me/AppData/Roaming/rat.exe")
+    f = NewExternalDestinationDetection().evaluate(DetectionContext(db=db, now=now))
+    assert [x.evidence["process"] for x in f] == ["rat.exe"]

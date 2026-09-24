@@ -65,6 +65,12 @@ _KNOWN_PERIODIC_PREFIXES = (
 _SUSPICIOUS_PATH = re.compile(
     r"[\\/](temp|tmp|downloads|public)[\\/]|[\\/]appdata[\\/]local[\\/]temp[\\/]", re.I)
 
+# A signed vendor binary installed here reaching a new address is expected
+# (updates, telemetry, a CDN node). The first-contact signal is worth raising
+# for a binary in a USER-writable path, not for every Office/Windows helper.
+_TRUSTED_INSTALL = re.compile(
+    r"[\\/](program files( \(x86\))?|windows|windowsapps)[\\/]", re.I)
+
 
 def _exe_name(process: str | None, path: str | None) -> str:
     base = (process or "") or (path or "")
@@ -217,6 +223,8 @@ class NewExternalDestinationDetection(Detection):
                 continue    # a connection whose process had already exited -- nothing to attribute
             if _is_known_good(r["process"], r["path"]):
                 continue
+            if r["path"] and _TRUSTED_INSTALL.search(r["path"]) and not _SUSPICIOUS_PATH.search(r["path"]):
+                continue    # a signed vendor binary in a trusted install path reaching a new endpoint
             if not _is_public(r["raddr"] or ""):
                 continue
             out.append(Finding(
