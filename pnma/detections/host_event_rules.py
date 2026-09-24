@@ -891,6 +891,44 @@ class CredentialDumpArtifactDetection(_HostEventRule):
         )
 
 
+class ShadowCopyDeletionDetection(_HostEventRule):
+    rule_id = "shadow_copy_deleted"
+    name = "Volume shadow copies deleted (ransomware precursor)"
+    severity = "high"
+    kind = "shadow_copies_deleted"
+    mitre_id = "T1490"
+    mitre_name = "Inhibit System Recovery"
+    requires = "Win32_ShadowCopy count, diffed against the host's own baseline (needs the collector elevated)"
+    blind_spots = (
+        "Watches the shadow-copy COUNT dropping from a non-empty set to zero -- it catches the "
+        "wipe, not the deletion command, and it can only protect what exists: if System Protection "
+        "is off there are no shadow copies to lose (and no rollback either). It does not watch files "
+        "being encrypted -- that is Defender's job (surfaced by the defender_threat rule), and this "
+        "fires earlier, at the moment the safety net is cut."
+    )
+
+    def describe(self, row, d):
+        prev = d.get("previous_count")
+        return (
+            "All volume shadow copies were deleted",
+            f"{row['summary']}\n\n"
+            f"  Restore points before  {prev}\n"
+            f"  Restore points now      0\n\n"
+            "WHY THIS MATTERS: shadow copies are the restore points you would use to roll a machine "
+            "back. Ransomware deletes them ALL right before it starts encrypting, precisely so you "
+            "cannot recover without paying. A full wipe of the set is one of the most reliable "
+            "early-warning signs of an active ransomware attack.\n\n"
+            "BENIGN EXPLANATION: you ran Disk Cleanup, turned System Protection off, or deleted "
+            "restore points by hand; a disk-space tool can also clear them under pressure.\n\n"
+            "MALICIOUS EXPLANATION: you did none of those, especially if it coincides with unfamiliar "
+            "processes, high disk activity, or files changing extension.\n\n"
+            "NEXT STEP: if it was not you, act now -- DISCONNECT this machine from the network and "
+            "power/storage to stop encryption in progress, then recover from an OFFLINE backup. Do "
+            "not reboot repeatedly. Check the Defender, autoruns and PowerShell alerts from the same "
+            "minute for what did it."
+        )
+
+
 def host_event_rules() -> list[Detection]:
     return [
         SuspiciousPowerShellDetection(),
@@ -911,6 +949,7 @@ def host_event_rules() -> list[Detection]:
         DefenderThreatDetection(),
         DnsServerChangedDetection(),
         LocalAdminGroupDiffDetection(),
+        ShadowCopyDeletionDetection(),
         ScheduledTaskAddedDetection(),
         KernelDriverAddedDetection(),
         CredentialDumpArtifactDetection(),

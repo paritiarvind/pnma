@@ -59,7 +59,7 @@ EVENT_KINDS = (
     "powershell_block", "service_installed", "log_cleared", "hidden_dir_created",
     "connection", "root_cert_added", "hosts_file_changed", "listening_process",
     "powershell_downgrade", "firewall_rule_added", "lateral_connection",
-    "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed", "scheduled_task_added", "kernel_driver_added", "credential_hive_dump",
+    "defender_threat", "account_lifecycle", "dns_server_changed", "admin_group_changed", "scheduled_task_added", "kernel_driver_added", "credential_hive_dump", "shadow_copies_deleted",
 )
 
 # --------------------------------------------------------------- classifiers
@@ -396,6 +396,7 @@ class HostEventCollector:
             ("scheduled_tasks", self.collect_scheduled_tasks),
             ("kernel_drivers", self.collect_kernel_drivers),
             ("cred_dumps", self.collect_cred_dumps),
+            ("shadow_copies", self.collect_shadow_copies),
         ):
             try:
                 n, unknown = fn()
@@ -1561,4 +1562,42 @@ foreach ($dir in $dmpDirs) {
                     severity="high", dedup_key=f"creddump:{h.get('path')}",
                     mitre_id="T1003.001" if h.get("kind") == "lsass_dump" else "T1003.002"):
                 n += 1
+        return n, ""
+
+
+    # -- shadow copies (ransomware precursor: T1490 Inhibit System Recovery) --
+
+    _SHADOW_PS = r"""
+param()
+try {
+  $c = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction Stop)
+  [pscustomobject]@{ ok = $true; count = [int]$c.Count } | ConvertTo-Json -Compress
+} catch { [pscustomobject]@{ ok = $false; error = $_.Exception.Message } | ConvertTo-Json -Compress }
+"""
+
+    def collect_shadow_copies(self) -> tuple[int, str]:
+        """Volume shadow copies are Windows' restore points. Ransomware deletes
+        them all before encrypting so you cannot roll back -- the classic
+        precursor. Snapshot the count; alert when a non-zero set is wiped to
+        zero. Needs elevation to enumerate; unelevated it stays quiet."""
+        ok, res, err = _ps_marked(self._SHADOW_PS, timeout=45)
+        if not ok or not (res or {}).get("ok"):
+            return 0, ""    # unelevated / VSS unavailable -> nothing to say, not a finding
+        count = int(res.get("count") or 0)
+        now = time.time()
+        prev_raw = self._meta("host_shadowcopy_count")
+        n = 0
+        if prev_raw is not None and int(prev_raw) > 0 and count == 0:
+            if self._emit(
+                    kind="shadow_copies_deleted", ts=now,
+                    summary=f"all {int(prev_raw)} volume shadow copies were deleted",
+                    detail={"previous_count": int(prev_raw), "current_count": 0},
+                    severity="high", dedup_key=f"shadowdel:{int(now)}", mitre_id="T1490"):
+                n += 1
+        self._set_meta("host_shadowcopy_count", str(count))
+        self.db.record_host_fact(
+            fact_key="integrity.shadow_copies", category="integrity",
+            title="Volume shadow copies (restore points)",
+            state="ok", value=f"{count} shadow " + ("copy" if count == 1 else "copies"),
+            expected="a sudden drop of a non-empty set to zero is the ransomware signature", reason=None)
         return n, ""

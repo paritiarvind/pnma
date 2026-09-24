@@ -378,3 +378,24 @@ def test_scheduled_task_empty_or_trusted_action_is_not_a_finding(fake, monkeypat
     c.collect_scheduled_tasks()
     alerted = db.query("SELECT detail FROM host_events WHERE kind='scheduled_task_added' AND severity IS NOT NULL")
     assert len(alerted) == 1 and json.loads(alerted[0]["detail"])["path"] == "Evil"
+
+
+def test_shadow_copy_wipe_alerts_high(fake, monkeypatch):
+    db = _db(); c = he.HostEventCollector(db)
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "count": 5}, ""))
+    assert c.collect_shadow_copies() == (0, "")             # baseline: 5 restore points
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "count": 4}, ""))
+    assert c.collect_shadow_copies()[0] == 0                 # a partial drop (aging) is not alerted
+    monkeypatch.setattr(he, "_ps_marked", lambda script, timeout=60: (True, {"ok": True, "count": 0}, ""))
+    n, err = c.collect_shadow_copies()                       # wiped to zero -> the ransomware signature
+    assert n == 1
+    ev = _events(db, "shadow_copies_deleted")
+    assert len(ev) == 1 and ev[0]["severity"] == "high"
+
+
+def test_shadow_copy_rule_makes_a_finding():
+    db = _db()
+    db.record_host_event(kind="shadow_copies_deleted", ts=time.time() - 60, summary="all 3 volume shadow copies were deleted",
+                         detail={"previous_count": 3, "current_count": 0}, severity="high", dedup_key="s", mitre_id="T1490", sensor_id="host")
+    f = rules.ShadowCopyDeletionDetection().evaluate(DetectionContext(db=db, now=time.time()))
+    assert len(f) == 1 and "shadow" in f[0].title.lower()
